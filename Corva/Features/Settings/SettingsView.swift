@@ -21,6 +21,16 @@ struct SettingsView: View {
                 }
                 .listRowBackground(CorvaColor.surface)
 
+                Section("Appearance") {
+                    Picker("Appearance", selection: $settings.appearance) {
+                        ForEach(AppSettings.Appearance.allCases) { appearance in
+                            Text(appearance.title).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .listRowBackground(CorvaColor.surface)
+
                 Section {
                     Stepper(value: $settings.age, in: 18...90) {
                         LabeledContent("Age", value: "\(settings.age)")
@@ -73,6 +83,8 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .screenBackground()
             .navigationTitle("Settings")
+            // The title sits in the top bar row, not on its own row below it.
+            .toolbarTitleDisplayMode(.inlineLarge)
         }
         .task { await model.load(using: provider) }
     }

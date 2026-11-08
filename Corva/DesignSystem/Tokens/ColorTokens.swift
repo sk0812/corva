@@ -4,27 +4,27 @@ import UIKit
 /// Every colour in the app. Views never use literal colours.
 ///
 /// Each token carries a light and a dark value and resolves against the current colour
-/// scheme, so supporting a light theme later is a matter of tuning the light values and
-/// removing the forced dark scheme in `CorvaApp`. Light values are placeholders until then.
+/// scheme. Dark is the signature look; light follows the same structure on a cool off-white,
+/// with metric hues darkened enough to hold contrast on white.
 enum CorvaColor {
 
     // MARK: Surfaces and text
 
     /// Near-black canvas behind everything.
-    static let background = Color(light: 0xF4F4F6, dark: 0x060607)
+    static let background = Color(light: 0xF2F2F6, dark: 0x060607)
     /// Opaque rows in system lists (Settings), one step up from the background.
     static let surface = Color(light: 0xFFFFFF, dark: 0x131315)
     static let textPrimary = Color(light: 0x0B0B0C, dark: 0xF5F5F7)
-    static let textSecondary = Color(light: 0x0B0B0C, dark: 0xF5F5F7, opacity: 0.58)
-    static let textTertiary = Color(light: 0x0B0B0C, dark: 0xF5F5F7, opacity: 0.36)
+    static let textSecondary = Color(light: 0x0B0B0C, dark: 0xF5F5F7, opacity: 0.6)
+    static let textTertiary = Color(light: 0x0B0B0C, dark: 0xF5F5F7, opacity: 0.42)
     static let separator = Color(light: 0x0B0B0C, dark: 0xFFFFFF, opacity: 0.10)
     /// Unfilled part of a score ring.
     static let ringTrack = Color(light: 0x0B0B0C, dark: 0xFFFFFF, opacity: 0.08)
     static let chartGrid = Color(light: 0x0B0B0C, dark: 0xFFFFFF, opacity: 0.08)
     /// The typical-range band behind vitals charts.
-    static let chartBand = Color(light: 0x0B0B0C, dark: 0xFFFFFF, opacity: 0.07)
+    static let chartBand = Color(light: 0x0B0B0C, dark: 0xFFFFFF, opacity: 0.06)
     /// Lines and marks for data with no metric colour of its own (vitals).
-    static let neutralData = Color(light: 0x2C2C2E, dark: 0xE5E5EA)
+    static let neutralData = Color(light: 0x3A3A3F, dark: 0xE5E5EA)
     /// A vital outside its typical range.
     static let alert = Color(light: 0xC4720A, dark: 0xFF9F43)
     /// System tint: controls and the selected tab stay neutral.

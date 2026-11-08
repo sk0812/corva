@@ -23,6 +23,8 @@ struct LabView: View {
             }
             .screenBackground(glow: CorvaColor.bioAge.opacity(0.8))
             .navigationTitle("Lab")
+            // The title sits in the top bar row, not on its own row below it.
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("New experiment", systemImage: "plus") { isAddingExperiment = true }

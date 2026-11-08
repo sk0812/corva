@@ -16,6 +16,8 @@ struct PactsView: View {
             }
             .screenBackground(glow: CorvaColor.pact.opacity(0.8))
             .navigationTitle("Pacts")
+            // The title sits in the top bar row, not on its own row below it.
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("New pact", systemImage: "plus") { isAddingPact = true }

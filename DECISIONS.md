@@ -15,7 +15,9 @@ way it does, the judgement calls I made, and what I'd revisit. It reflects three
 - I checked every new screen in the iOS 26.2 simulator, including tagging an experiment
   evening and creating a pact end to end.
 - No third-party dependencies.
-- The project file has exactly three edits, listed under "Target settings".
+- **Project file edits:** the three target edits under "Target settings", plus one setting so
+  the app icon is used. Your signing team and the `com.corva.corva.app` bundle ID were set
+  through Xcode.
 
 ---
 
@@ -25,6 +27,8 @@ way it does, the judgement calls I made, and what I'd revisit. It reflects three
    - `IPHONEOS_DEPLOYMENT_TARGET` 27.2 → **26.0**
    - `SUPPORTED_PLATFORMS` → `iphoneos iphonesimulator`
    - `TARGETED_DEVICE_FAMILY` → `1` (iPhone)
+
+   - `ASSETCATALOG_COMPILER_APPICON_NAME` → `AppIcon` (the template didn't name an icon)
 
    iPads still appear as run destinations, because iPhone apps run on iPad in compatibility
    mode. There are no native Mac or visionOS builds any more. I left the inert template
@@ -71,6 +75,13 @@ way it does, the judgement calls I made, and what I'd revisit. It reflects three
 ## What each screen shows now
 
 The tab bar has five tabs: Today, Trends, Lab, Pacts and Settings.
+
+**Headings sit in the top bar on every tab, with no empty row above.**
+- **Today:** the title and date sit in the centre of the bar between the previous/next-day
+  arrows.
+- **Other tabs:** Trends, Lab, Pacts and Settings use `.toolbarTitleDisplayMode(.inlineLarge)`,
+  so the large title shares the row with the + button.
+- **Detail screens:** keep small inline titles.
 
 **Today.** Previous/next-day arrows in a glass toolbar let you browse any of the last 90 days.
 - **Three dials** (sleep, recovery, strain) with gradient strokes and glow, each with its
@@ -172,7 +183,8 @@ The tab bar has five tabs: Today, Trends, Lab, Pacts and Settings.
   - Head to head or just me; if just me, pay a friend or a charity.
   - Stake, sick-day pass, and a plain-English "The deal" summary.
 
-**Settings** gains two sections:
+**Settings** gains three sections:
+- **Appearance:** System (the default), Light or Dark.
 - **Profile:** age and sex, used only for bio age reference values.
 - **Pacts:** currency for new stakes, defaulting to the region's (pounds on a UK device).
 
@@ -183,6 +195,7 @@ The tab bar has five tabs: Today, Trends, Lab, Pacts and Settings.
 ```
 Corva/
 ├── App/                         Entry point, tab bar, environment, settings store, preview helpers
+├── Assets.xcassets/AppIcon      App icon: standard, dark and tinted variants
 ├── DesignSystem/
 │   ├── Tokens/                  Colours (incl. alert), metric→colour mapping, spacing/radii/sizes, type styles
 │   └── Components/
@@ -383,8 +396,22 @@ Every day, today included, is treated as complete.
 
 ## Design system notes
 
-- **Every colour is a token** with light and dark values. A light theme means tuning the light
-  values and removing `.preferredColorScheme(.dark)`. The light values are untested.
+- **Every colour is a token** with light and dark values.
+- **Light theme:** the app now follows the system appearance by default; Settings › Appearance
+  can force light or dark.
+  - **Light palette:** a cool off-white canvas (`#F2F2F6`), white list rows, and slightly darker
+    metric hues so they hold contrast on white.
+  - **Glow:** the background glow drops to 60% strength in light mode, because colour washes
+    read much stronger on white.
+  - **Dark** remains the signature look.
+- **App icon:** a single open ring forming a "C", running sleep purple → strain blue → recovery
+  green, over a faint ring track on near-black.
+  - It echoes the score rings without resembling Apple's three Activity rings.
+  - The dark variant is transparent, and the tinted variant is greyscale for iOS to colour.
+  - `Branding/make_logo.swift` renders all three, plus `Branding/Corva-lockup.png` (icon and
+    wordmark).
+  - It's a classic icon set rather than an Icon Composer `.icon` file. A layered Liquid Glass
+    icon would be a good later upgrade.
 - **One hue per metric:** recovery green, amber or red; strain blue; sleep purple. Zones and
   stages use opacity steps of their parent hue. A single extra **alert** colour (orange) marks
   out-of-range values. Deltas stay neutral grey with arrows.
@@ -416,6 +443,7 @@ Every day, today included, is treated as complete.
 
 ## Unsure about, or would revisit
 
+- **Backend:** see `BACKEND_PLAN.md` for the plan and the decisions it needs from you.
 - **Calibration.** Every weight, the strain target and the training-load band are educated
   guesses. Validate them against real data before anyone relies on them.
 - **Bio age is the most fragile number in the app.** Its references come from population norms,

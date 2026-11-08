@@ -15,6 +15,8 @@ struct TrendsView: View {
             }
             .screenBackground(glow: CorvaColor.strain.opacity(0.7))
             .navigationTitle("Trends")
+            // The title sits in the top bar row, not on its own row below it.
+            .toolbarTitleDisplayMode(.inlineLarge)
         }
         .task { await model.load(using: provider) }
     }

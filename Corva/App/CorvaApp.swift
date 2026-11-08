@@ -25,9 +25,8 @@ struct CorvaApp: App {
                 .environment(experiments)
                 .environment(pacts)
                 .environment(\.healthDataProvider, provider)
-                // Dark-first. Colour tokens already carry light values; remove this to
-                // follow the system appearance once the light theme has been tuned.
-                .preferredColorScheme(.dark)
+                // Follows the system unless Settings › Appearance picks light or dark.
+                .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(CorvaColor.accent)
         }
     }

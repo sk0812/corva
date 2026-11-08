@@ -79,18 +79,29 @@ struct CardDivider: View {
 }
 
 extension View {
-    /// The near-black canvas behind every screen, optionally lit from the top by a soft glow
-    /// in the colour of the screen's headline metric.
+    /// The screen's canvas (near-black, or near-white in light mode), optionally lit from the
+    /// top by a soft glow in the colour of the screen's headline metric.
     ///
     /// The glow is data, not decoration: it takes the colour of today's recovery zone (or the
     /// metric a detail screen is about), and it gives the glass above it something to refract.
     func screenBackground(glow: Color? = nil) -> some View {
-        background {
+        modifier(ScreenBackground(glow: glow))
+    }
+}
+
+private struct ScreenBackground: ViewModifier {
+    let glow: Color?
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        // Colour washes read much stronger on white, so light mode uses about two thirds.
+        let strength = colorScheme == .dark ? 1.0 : 0.6
+        content.background {
             ZStack(alignment: .top) {
                 CorvaColor.background
                 if let glow {
                     EllipticalGradient(
-                        colors: [glow.opacity(0.34), glow.opacity(0.12), .clear],
+                        colors: [glow.opacity(0.34 * strength), glow.opacity(0.12 * strength), .clear],
                         center: .top,
                         startRadiusFraction: 0,
                         endRadiusFraction: 0.8

@@ -1,10 +1,12 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// User preferences. In memory only for now; move to `@AppStorage` or SwiftData when
 /// persistence arrives.
 @Observable
 final class AppSettings {
+    var appearance: Appearance = .system
     var temperatureUnit: TemperatureUnit
     var distanceUnit: DistanceUnit
     /// Calendar age, for bio age reference values.
@@ -28,6 +30,31 @@ final class AppSettings {
 
     var profile: Profile {
         Profile(age: age, sex: sex)
+    }
+
+    enum Appearance: String, CaseIterable, Identifiable {
+        case system
+        case light
+        case dark
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .system: "System"
+            case .light: "Light"
+            case .dark: "Dark"
+            }
+        }
+
+        /// Nil follows the system setting.
+        var colorScheme: ColorScheme? {
+            switch self {
+            case .system: nil
+            case .light: .light
+            case .dark: .dark
+            }
+        }
     }
 
     /// Currencies offered for stakes.

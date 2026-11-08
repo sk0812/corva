@@ -24,11 +24,16 @@ struct TodayView: View {
             .screenBackground(glow: glow)
             .navigationTitle(title)
             .navigationSubtitle(format.dayTitle(model.date))
+            // Inline, so the day and date sit in the top bar between the arrows instead of a
+            // large title pushing the dials down.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button("Previous day", systemImage: "chevron.left") {
                         Task { await model.step(by: -1, using: provider) }
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Next day", systemImage: "chevron.right") {
                         Task { await model.step(by: 1, using: provider) }
                     }
