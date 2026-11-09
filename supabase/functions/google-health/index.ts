@@ -13,9 +13,10 @@
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
-const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
-const CRON_SECRET = Deno.env.get("CORVA_CRON_SECRET") ?? "";
+// Trimmed: a stray space pasted into a dashboard secret makes Google reject the client.
+const GOOGLE_CLIENT_ID = (Deno.env.get("GOOGLE_CLIENT_ID") ?? "").trim();
+const GOOGLE_CLIENT_SECRET = (Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "").trim();
+const CRON_SECRET = (Deno.env.get("CORVA_CRON_SECRET") ?? "").trim();
 
 const CALLBACK_URL = `${SUPABASE_URL}/functions/v1/google-health/callback`;
 const APP_RETURN_URL = "corva://google-health";
