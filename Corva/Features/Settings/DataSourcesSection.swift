@@ -21,7 +21,7 @@ struct DataSourcesSection: View {
                     Spacer(minLength: Spacing.s)
                     googleStatus
                 }
-                if let error = google?.lastError, isConnected {
+                if let error = isConnected ? google?.lastError : account.googleHealthConnectError {
                     Text(error)
                         .font(.footnote)
                         .foregroundStyle(CorvaColor.alert)

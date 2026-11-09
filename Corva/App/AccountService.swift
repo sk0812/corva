@@ -20,6 +20,8 @@ final class AccountService {
     private(set) var lastError: String?
     /// The Google Health connection as the server reports it. Nil until checked.
     private(set) var googleHealth: GoogleHealthStatus?
+    /// Why the last attempt to connect Google Health failed, shown beside the Connect button.
+    private(set) var googleHealthConnectError: String?
     /// Bumped when real data changes underneath the screens (connect, sync, disconnect), so
     /// they reload.
     private(set) var dataVersion = 0
@@ -228,14 +230,16 @@ final class AccountService {
     /// and the server stores the tokens and starts pulling history.
     func connectGoogleHealth(authenticate: (URL) async throws -> URL) async {
         isWorking = true
-        lastError = nil
+        googleHealthConnectError = nil
         defer { isWorking = false }
         do {
             let response = try await client.function("google-health/connect", EmptyRequest(), returning: ConnectResponse.self)
             let callback = try await authenticate(response.url)
             let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
             guard items.first(where: { $0.name == "status" })?.value == "connected" else {
-                lastError = items.first(where: { $0.name == "message" })?.value ?? "Google Health didn’t connect. Try again."
+                googleHealthConnectError = items.first(where: { $0.name == "message" })?.value ?? "Google Health didn’t connect. Try again."
+                // A refused connection is removed on the server; reflect that here.
+                try? await loadGoogleHealthStatus()
                 return
             }
             try await loadGoogleHealthStatus()
@@ -247,7 +251,8 @@ final class AccountService {
             await dataChanged()
             await refresh()
         } catch {
-            record(error)
+            if let authError = error as? ASWebAuthenticationSessionError, authError.code == .canceledLogin { return }
+            googleHealthConnectError = error.localizedDescription
         }
     }
 

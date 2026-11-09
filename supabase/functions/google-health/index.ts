@@ -25,6 +25,19 @@ const SCOPES = [
   "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
   "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
 ];
+const SCOPE_NAMES: Record<string, string> = {
+  [SCOPES[0]]: "activity",
+  [SCOPES[1]]: "heart and vitals",
+  [SCOPES[2]]: "sleep",
+};
+const MISSING_ACCESS_MESSAGE =
+  "Corva doesn't have access to your Google Health data. Connect again and tick every box on Google's screen.";
+
+/** The Health permissions missing from a granted-scope string, by friendly name. */
+function missingScopes(granted: string | null | undefined): string[] {
+  const have = new Set((granted ?? "").split(/\s+/));
+  return SCOPES.filter((scope) => !have.has(scope)).map((scope) => SCOPE_NAMES[scope]);
+}
 
 // ---------------------------------------------------------------------------------------
 // HTTP entry point
@@ -154,6 +167,20 @@ async function callback(url: URL): Promise<Response> {
   });
   if (!tokens.refresh_token) return back("error", "Google didn't grant ongoing access. Try again.");
 
+  // Google's consent screen lists each permission with its own checkbox, and continuing
+  // without ticking them still succeeds. Corva needs all three, so refuse anything less
+  // instead of storing a connection that can't read anything.
+  const missing = missingScopes(tokens.scope);
+  if (missing.length > 0) {
+    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(tokens.refresh_token)}`, { method: "POST" })
+      .catch(() => {});
+    await db(`google_connections?user_id=eq.${pending.user_id}`, { method: "DELETE" });
+    return back(
+      "error",
+      `Google didn't share your ${missing.join(", ")} data. Connect again and tick every box on Google's screen.`,
+    );
+  }
+
   await db("google_connections?on_conflict=user_id", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
@@ -251,6 +278,14 @@ type Day = Record<string, unknown> & { date: string };
 
 /** Pulls `days` days (plus tomorrow, for time zones ahead of UTC) and upserts daily_records. */
 async function syncUser(userId: string, days: number) {
+  const granted = (await db(`google_connections?user_id=eq.${userId}&select=scopes`))?.[0]?.scopes;
+  if (missingScopes(granted).length > 0) {
+    await db(`google_connections?user_id=eq.${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ last_error: MISSING_ACCESS_MESSAGE }),
+    });
+    throw new HttpError(403, MISSING_ACCESS_MESSAGE);
+  }
   const token = await accessToken(userId);
   const end = addDays(todayUTC(), 2); // exclusive
   const start = addDays(todayUTC(), -days);
@@ -420,6 +455,9 @@ async function google(token: string, url: string, init: RequestInit = {}): Promi
     try {
       message = JSON.parse(text).error?.message ?? text;
     } catch { /* not JSON */ }
+    if (response.status === 403 && /insufficient authentication scopes/i.test(message)) {
+      throw new HttpError(403, MISSING_ACCESS_MESSAGE);
+    }
     throw new Error(`Google Health ${response.status}: ${message}`.slice(0, 400));
   }
   return text ? JSON.parse(text) : {};
