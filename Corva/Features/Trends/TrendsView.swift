@@ -3,11 +3,12 @@ import SwiftUI
 
 struct TrendsView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @State private var model = TrendsViewModel()
 
     var body: some View {
         NavigationStack {
-            LoadStateView(model.state) { content in
+            LoadStateView(model.state, retry: { await model.load(using: provider) }) { content in
                 ScrollView {
                     TrendsContent(content: content, model: model)
                 }
@@ -18,7 +19,7 @@ struct TrendsView: View {
             // The title sits in the top bar row, not on its own row below it.
             .toolbarTitleDisplayMode(.inlineLarge)
         }
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
@@ -28,6 +29,7 @@ private struct TrendsContent: View {
 
     var body: some View {
         VStack(spacing: Spacing.m) {
+            DemoDataNotice()
             Picker("Period", selection: $model.period) {
                 ForEach(TrendPeriod.allCases) { period in
                     Text(period.title)
@@ -60,7 +62,8 @@ private struct TrendsContent: View {
                 .padding(.top, Spacing.s)
             GlassEffectContainer(spacing: Spacing.m) {
                 VStack(spacing: Spacing.m) {
-                    ForEach(Metric.vitals) { metric in
+                    // A vital the tracker never reported gets no card, rather than one full of zeros.
+                    ForEach(Metric.vitals.filter { !model.series(for: $0, in: content).points.isEmpty }) { metric in
                         TrendCard(series: model.series(for: metric, in: content))
                     }
                 }
@@ -284,7 +287,7 @@ private struct RelationshipRow: View {
             Spacer(minLength: Spacing.s)
             CorrelationBar(r: relationship.r)
                 .frame(width: 64)
-            Text((relationship.r < 0 ? "−" : "+") + abs(relationship.r).formatted(.number.precision(.fractionLength(2))))
+            Text(relationship.strength == .notEnoughData ? "—" : (relationship.r < 0 ? "−" : "+") + abs(relationship.r).formatted(.number.precision(.fractionLength(2))))
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(CorvaColor.textPrimary)

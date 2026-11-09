@@ -10,20 +10,26 @@ enum TodayDestination: Hashable {
 
 struct TodayView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
+    @Environment(AccountService.self) private var account
     @State private var model = TodayViewModel()
 
     var body: some View {
         NavigationStack {
-            LoadStateView(model.state) { content in
+            LoadStateView(
+                model.state,
+                emptyMessage: "No data for this day yet. If you wore your tracker, pull down to sync.",
+                retry: refresh
+            ) { content in
                 ScrollView {
                     TodayContent(content: content)
                 }
-                .refreshable { await model.load(using: provider) }
+                .refreshable(action: refresh)
             }
             .screenBackground(glow: glow)
             .navigationTitle(title)
-            .navigationSubtitle(format.dayTitle(model.date))
+            .navigationSubtitle(format.dayTitle(shownDate))
             // Inline, so the day and date sit in the top bar between the arrows instead of a
             // large title pushing the dials down.
             .navigationBarTitleDisplayMode(.inline)
@@ -43,7 +49,20 @@ struct TodayView: View {
             .navigationDestination(for: TodayDestination.self, destination: destinationView)
         }
         .sensoryFeedback(.selection, trigger: model.date)
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
+    }
+
+    /// Pulls the latest from Google Health (when connected), then reloads.
+    private func refresh() async {
+        await account.syncGoogleHealth(days: 3)
+        await model.load(using: provider)
+    }
+
+    /// The day on screen: usually the chosen one, or the latest synced day before last
+    /// night arrives.
+    private var shownDate: Date {
+        if case .loaded(let content) = model.state { return content.day.date }
+        return model.date
     }
 
     private var title: String {
@@ -77,6 +96,17 @@ private struct TodayContent: View {
         VStack(spacing: Spacing.m) {
             if isShowingDemoData {
                 DemoDataNotice()
+            } else if content.isEarlierDay {
+                ScreenNotice(
+                    symbol: "arrow.triangle.2.circlepath",
+                    text: "Last night hasn’t synced yet. Showing \(content.day.date.formatted(.dateTime.weekday(.wide)))."
+                )
+            }
+            if !content.day.baseline.isCalibrated {
+                ScreenNotice(
+                    symbol: "gauge.with.dots.needle.33percent",
+                    text: "Calibrating. Recovery and typical ranges compare you with your own baseline, which needs \(Baseline.minimumDays) nights of data. Until then they’re provisional."
+                )
             }
             ScoreDials(content: content)
                 .padding(.bottom, Spacing.s)
@@ -93,22 +123,6 @@ private struct TodayContent: View {
 }
 
 // MARK: - Demo notice
-
-/// Says plainly that these aren't the user's numbers yet.
-private struct DemoDataNotice: View {
-    var body: some View {
-        HStack(spacing: Spacing.xs) {
-            Image(systemName: "sparkles")
-            Text("Demo data. Connect Google Health in Settings to see yours.")
-                .lineLimit(2)
-        }
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(CorvaColor.textSecondary)
-        .padding(.horizontal, Spacing.m)
-        .padding(.vertical, Spacing.xs)
-        .glassEffect(.regular, in: .capsule)
-    }
-}
 
 // MARK: - Dials
 
@@ -204,6 +218,10 @@ private struct HealthMonitorCard: View {
     let content: TodayViewModel.Content
     @Environment(\.metricFormatter) private var format
 
+    private var missingVitals: [Metric] {
+        Metric.vitals.filter { !content.availableVitals.contains($0) }
+    }
+
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -220,6 +238,11 @@ private struct HealthMonitorCard: View {
                         }
                         .buttonStyle(.plain)
                     }
+                }
+                if !missingVitals.isEmpty {
+                    Text("Not recorded last night: \(missingVitals.map(\.shortTitle).formatted(.list(type: .and)))")
+                        .textStyle(.caption)
+                        .padding(.top, Spacing.xxs)
                 }
             }
         }
@@ -296,6 +319,10 @@ private struct SleepSummaryCard: View {
                         Text("of \(format.duration(sleep.need)) need").textStyle(.caption)
                     }
                     ProgressBar(fraction: sleep.need > 0 ? sleep.timeAsleep / sleep.need : 0, tint: CorvaColor.sleep)
+                    if !sleep.hasStages {
+                        Text("Your tracker didn’t record sleep stages this night.")
+                            .textStyle(.caption)
+                    } else {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         SegmentedBar(segments: SleepStage.displayOrder.map {
                             .init(id: $0.rawValue, value: sleep.duration(of: $0), color: $0.color)
@@ -314,10 +341,11 @@ private struct SleepSummaryCard: View {
                             }
                         }
                     }
+                    }
                     CardDivider()
                     StatGrid {
                         StatTile(label: "Efficiency", value: format.percent(sleep.efficiency))
-                        StatTile(label: "Deep + REM", value: format.percent(sleep.restorativeShare))
+                        StatTile(label: "Deep + REM", value: sleep.hasStages ? format.percent(sleep.restorativeShare) : "—")
                         StatTile(label: "Debt · 7d", value: format.duration(content.weeklySleepDebt))
                     }
                 }
@@ -352,8 +380,8 @@ private struct ActivitySummaryCard: View {
                     StatGrid(columns: 4) {
                         StatTile(label: "Active", value: format.value(strain.activeEnergy, for: .strain), unit: "kcal")
                         StatTile(label: "Steps", value: format.steps(strain.steps))
-                        StatTile(label: "Avg HR", value: "\(strain.averageHeartRate)", unit: "bpm")
-                        StatTile(label: "Max HR", value: "\(strain.maxHeartRate)", unit: "bpm")
+                        StatTile(label: "Avg HR", value: strain.averageHeartRate > 0 ? "\(strain.averageHeartRate)" : "—", unit: strain.averageHeartRate > 0 ? "bpm" : nil)
+                        StatTile(label: "Max HR", value: strain.maxHeartRate > 0 ? "\(strain.maxHeartRate)" : "—", unit: strain.maxHeartRate > 0 ? "bpm" : nil)
                     }
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         HStack {

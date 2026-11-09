@@ -31,8 +31,8 @@ final class SleepDetailViewModel {
 
         var sleep: SleepMetrics { day.sleep }
         var delta: Double? { day.baseline.delta(for: .sleep, in: day) }
-        var weeklyDebt: TimeInterval { Insights.sleepDebt(history.suffix(SleepDetailViewModel.consistencyWindow).map(\.sleep)) }
-        var fortnight: [DailySummary] { Array(history.suffix(14)) }
+        var weeklyDebt: TimeInterval { Insights.sleepDebt(history.lastDays(SleepDetailViewModel.consistencyWindow, endingOn: day.date).map(\.sleep)) }
+        var fortnight: [DailySummary] { history.lastDays(14, endingOn: day.date) }
     }
 
     static let consistencyWindow = 7
@@ -60,7 +60,7 @@ final class SleepDetailViewModel {
     }
 
     private func makeContent(day: DailySummary, history: [DailySummary]) -> Content {
-        let recent = Array(history.suffix(Self.consistencyWindow))
+        let recent = history.lastDays(Self.consistencyWindow, endingOn: history.last?.date ?? .now)
         let nights = recent.map { summary in
             Night(
                 date: summary.date,

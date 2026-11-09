@@ -12,4 +12,9 @@ extension EnvironmentValues {
 
     /// True while screens show generated demo data rather than the user's own.
     @Entry var isShowingDemoData = true
+
+    /// Changes whenever the health data underneath changes (demo ⇄ real, or a sync lands).
+    /// Screens load with `.task(id: dataVersion)`, so they reload in place instead of being
+    /// rebuilt, which keeps open sheets, pushed screens and the chosen day.
+    @Entry var dataVersion = 0
 }

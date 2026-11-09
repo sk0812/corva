@@ -10,12 +10,13 @@ enum LabDestination: Hashable {
 /// Longer-range analysis: bio age, what your best days have in common, and experiments.
 struct LabView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @State private var model = LabViewModel()
     @State private var isAddingExperiment = false
 
     var body: some View {
         NavigationStack {
-            LoadStateView(model.state) { days in
+            LoadStateView(model.state, retry: { await model.load(using: provider) }) { days in
                 ScrollView {
                     LabContent(days: days, model: model, addExperiment: { isAddingExperiment = true })
                 }
@@ -41,7 +42,7 @@ struct LabView: View {
                 NewExperimentView()
             }
         }
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
@@ -54,10 +55,12 @@ private struct LabContent: View {
 
     var body: some View {
         VStack(spacing: Spacing.m) {
+            DemoDataNotice()
             NavigationLink(value: LabDestination.bioAge) {
                 BioAgeSummaryCard(
-                    estimate: model.bioAge(in: days, profile: settings.profile),
-                    history: model.bioAgeHistory(in: days, profile: settings.profile)
+                    estimate: settings.profile.flatMap { model.bioAge(in: days, profile: $0) },
+                    history: settings.profile.map { model.bioAgeHistory(in: days, profile: $0) } ?? [],
+                    needsAge: settings.profile == nil
                 )
             }
             .buttonStyle(.plain)
@@ -100,6 +103,7 @@ private struct LabContent: View {
 private struct BioAgeSummaryCard: View {
     let estimate: BioAge.Estimate?
     let history: [DatedValue]
+    let needsAge: Bool
     @Environment(\.metricFormatter) private var format
 
     var body: some View {
@@ -121,16 +125,13 @@ private struct BioAgeSummaryCard: View {
                             .frame(width: 92, height: Size.sparklineHeight)
                     }
                     AgeScale(chronological: estimate.chronologicalAge, biological: estimate.biologicalAge)
-                    HStack(spacing: Spacing.s) {
-                        if let best = estimate.markers.min(by: { $0.years < $1.years }), best.years < 0 {
-                            MarkerChip(marker: best)
-                        }
-                        if let worst = estimate.markers.max(by: { $0.years < $1.years }), worst.years > 0 {
-                            MarkerChip(marker: worst)
-                        }
+                    // Side by side when they fit, stacked when the names are long.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Spacing.s) { markerChips }
+                        VStack(alignment: .leading, spacing: Spacing.xs) { markerChips }
                     }
                 } else {
-                    Text("Bio age needs at least two weeks of data.")
+                    Text(needsAge ? "Add your age in Settings › Profile to see your bio age." : "Bio age needs at least two weeks of data.")
                         .textStyle(.bodySecondary)
                 }
             }
@@ -150,6 +151,7 @@ struct MarkerChip: View {
                 .frame(width: 6, height: 6)
             Text(marker.kind.title)
                 .foregroundStyle(CorvaColor.textSecondary)
+                .fixedSize()
             Text("\(format.signed(marker.years)) y")
                 .monospacedDigit()
                 .foregroundStyle(CorvaColor.textPrimary)
@@ -163,6 +165,20 @@ struct MarkerChip: View {
 }
 
 // MARK: - Best vs worst
+
+extension BioAgeSummaryCard {
+    @ViewBuilder
+    fileprivate var markerChips: some View {
+        if let estimate {
+            if let best = estimate.markers.min(by: { $0.years < $1.years }), best.years < 0 {
+                MarkerChip(marker: best)
+            }
+            if let worst = estimate.markers.max(by: { $0.years < $1.years }), worst.years > 0 {
+                MarkerChip(marker: worst)
+            }
+        }
+    }
+}
 
 private struct BestDaysSummaryCard: View {
     let result: DayContrast.Result?

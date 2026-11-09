@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RecoveryDetailView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
     @State private var model: RecoveryDetailViewModel
 
@@ -19,7 +20,7 @@ struct RecoveryDetailView: View {
         .navigationTitle(Metric.recovery.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitle(format.dayTitle(model.date))
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 
     private var glow: Color? {
@@ -213,14 +214,18 @@ struct RelationshipSummary: View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.l) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Correlation").textStyle(.label)
-                Text(signedR(relationship.r))
+                Text(relationship.strength == .notEnoughData ? "—" : signedR(relationship.r))
                     .textStyle(.numeral)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(relationship.strength.rawValue)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(CorvaColor.textPrimary)
-                if let slope = relationship.fit?.slope {
+                if relationship.strength == .notEnoughData {
+                    Text("\(relationship.pairs.count) days so far")
+                        .font(.caption)
+                        .foregroundStyle(CorvaColor.textSecondary)
+                } else if let slope = relationship.fit?.slope {
                     Text(slopeText(slope))
                         .font(.caption)
                         .foregroundStyle(CorvaColor.textSecondary)

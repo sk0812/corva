@@ -30,7 +30,7 @@ final class MetricDetailViewModel {
 
         /// Seven-day mean versus the 30-day mean: is it drifting?
         var weekVersusMonth: Double {
-            Statistics.mean(points.suffix(7).map(\.value)) - average
+            Statistics.mean(points.filter { $0.date > day.date.addingTimeInterval(-7 * 86_400) }.map(\.value)) - average
         }
     }
 

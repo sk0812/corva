@@ -24,6 +24,8 @@ nonisolated struct DailyRecordRow: Decodable, Sendable {
         let start: String
         let end: String
         let stages: [Stage]?
+        /// Google's own total, which accounts for gaps between stages.
+        let minutesAsleep: Double?
 
         struct Stage: Decodable, Sendable {
             let type: String
@@ -35,6 +37,7 @@ nonisolated struct DailyRecordRow: Decodable, Sendable {
     struct Exercise: Decodable, Sendable {
         let id: String?
         let type: String?
+        let name: String?
         let start: String
         let end: String
         let seconds: Double?
@@ -64,17 +67,28 @@ nonisolated enum DailyRecordMapper {
             defer { previousStrain = strain.score }
 
             guard let hrv = row.hrv, let restingHeartRate = row.restingHr,
-                  let night = row.sleep, let segments = segments(for: night), !segments.isEmpty else { continue }
+                  let night = row.sleep,
+                  let bedtime = ISODate.parse(night.start), let wakeTime = ISODate.parse(night.end),
+                  wakeTime > bedtime else { continue }
 
-            let baseline = Baseline(history: Array(summaries.suffix(Baseline.windowDays)))
+            // The baseline is the 30 calendar days before, so a gap doesn't stretch it.
+            let baseline = Baseline(history: Baseline.window(before: date, in: summaries, calendar: calendar))
             let need = Scoring.sleepNeed(previousStrain: previousStrain, sleepDebt: sleepDebt)
-            let timeAsleep = segments.filter(\.stage.isAsleep).reduce(0) { $0 + $1.duration }
+            let stages = stagedSegments(for: night)
+            // Classic sleep has no stages: one block, counted as asleep, and marked so the UI
+            // doesn't present it as a night of light sleep.
+            let segments = stages.isEmpty ? [SleepSegment(stage: .light, start: bedtime, end: wakeTime)] : stages
+            let timeAsleep = night.minutesAsleep.map { $0 * 60 }
+                ?? segments.filter(\.stage.isAsleep).reduce(0) { $0 + $1.duration }
             let sleep = SleepMetrics(
                 score: Scoring.sleepScore(timeAsleep: timeAsleep, need: need),
-                bedtime: segments.first?.start ?? date,
-                wakeTime: segments.last?.end ?? date,
+                bedtime: bedtime,
+                wakeTime: wakeTime,
                 need: need,
-                segments: segments
+                segments: segments,
+                reportedTimeAsleep: night.minutesAsleep.map { $0 * 60 },
+                hasStages: !stages.isEmpty,
+                debtRepayment: Scoring.debtRepayment(sleepDebt: sleepDebt)
             )
             let vitals = Vitals(
                 hrv: hrv,
@@ -127,15 +141,13 @@ nonisolated enum DailyRecordMapper {
         )
     }
 
-    /// Sleep stages laid end to end. Classic sleep (no stages) counts as light sleep.
-    private static func segments(for sleep: DailyRecordRow.Sleep) -> [SleepSegment]? {
-        guard let start = ISODate.parse(sleep.start), let end = ISODate.parse(sleep.end), end > start else { return nil }
-        let stages = (sleep.stages ?? []).compactMap { stage -> SleepSegment? in
+    /// The night's stages in order. Empty for classic sleep, which has none.
+    private static func stagedSegments(for sleep: DailyRecordRow.Sleep) -> [SleepSegment] {
+        (sleep.stages ?? []).compactMap { stage -> SleepSegment? in
             guard let from = ISODate.parse(stage.start), let to = ISODate.parse(stage.end), to > from else { return nil }
             return SleepSegment(stage: sleepStage(stage.type), start: from, end: to)
         }
         .sorted { $0.start < $1.start }
-        return stages.isEmpty ? [SleepSegment(stage: .light, start: start, end: end)] : stages
     }
 
     private static func sleepStage(_ type: String) -> SleepStage {
@@ -166,7 +178,8 @@ nonisolated enum DailyRecordMapper {
             maxHeartRate: 0,
             energy: exercise.kcal ?? 0,
             distance: exercise.distanceM,
-            heartRateZones: zones
+            heartRateZones: zones,
+            name: exercise.name.flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 

@@ -59,7 +59,7 @@ final class RecoveryDetailViewModel {
             }
             state = .loaded(Content(
                 day: day,
-                history: Array(longHistory.suffix(Baseline.windowDays)),
+                history: longHistory.lastDays(Baseline.windowDays, endingOn: day.date),
                 longHistory: longHistory,
                 contributors: Self.contributors(for: day)
             ))

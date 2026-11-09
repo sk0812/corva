@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MetricDetailView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
     @State private var model: MetricDetailViewModel
 
@@ -19,7 +20,7 @@ struct MetricDetailView: View {
         .navigationTitle(model.metric.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitle(format.dayTitle(model.date))
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 
     /// Neutral for a normal reading, the alert colour when today is outside the typical range.

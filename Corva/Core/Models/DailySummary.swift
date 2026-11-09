@@ -22,6 +22,16 @@ nonisolated struct DailySummary: Identifiable, Hashable, Sendable {
     var id: Date { date }
 }
 
+extension Array where Element == DailySummary {
+    /// The summaries in the `days` calendar days ending on `end` (inclusive). With gaps in the
+    /// data this can hold fewer than `days` entries, which is the point: "last 7 days" means
+    /// the last 7 days, not the last 7 entries.
+    nonisolated func lastDays(_ days: Int, endingOn end: Date, calendar: Calendar = .current) -> [DailySummary] {
+        guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: end)) else { return [] }
+        return filter { $0.date >= start && $0.date <= end }
+    }
+}
+
 nonisolated struct RecoveryMetrics: Hashable, Sendable {
     /// 0-100.
     let score: Int

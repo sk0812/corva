@@ -82,8 +82,13 @@ nonisolated enum Scoring {
     /// an easy day, and up to 40 minutes towards repaying accumulated sleep debt.
     static func sleepNeed(previousStrain: Int, sleepDebt: TimeInterval) -> TimeInterval {
         let strainExtra = max(0, Double(previousStrain) - 35) / 65 * 35 * 60
-        let debtExtra = min(sleepDebt * 0.3, 40 * 60)
-        return baseSleepNeed + strainExtra + debtExtra
+        return baseSleepNeed + strainExtra + debtRepayment(sleepDebt: sleepDebt)
+    }
+
+    /// The part of a night's need that goes towards repaying earlier debt: 30% of it, up to
+    /// 40 minutes.
+    static func debtRepayment(sleepDebt: TimeInterval) -> TimeInterval {
+        min(sleepDebt * 0.3, 40 * 60)
     }
 
     /// Sleep performance, 0-100: time asleep as a share of need.

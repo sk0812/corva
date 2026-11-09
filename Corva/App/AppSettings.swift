@@ -9,8 +9,9 @@ final class AppSettings {
     var appearance: Appearance = .system
     var temperatureUnit: TemperatureUnit
     var distanceUnit: DistanceUnit
-    /// Calendar age, for bio age reference values.
-    var age = 32
+    /// Calendar age, for bio age reference values. Nil until the user sets it: bio age is
+    /// only shown against an age they've actually given.
+    var age: Int?
     var sex: BiologicalSex = .notSet
     /// Currency for new pact stakes. Existing pacts keep the currency they were made in.
     var currencyCode: String
@@ -28,13 +29,20 @@ final class AppSettings {
         MetricFormatter(temperatureUnit: temperatureUnit, distanceUnit: distanceUnit)
     }
 
-    var profile: Profile {
-        Profile(age: age, sex: sex)
+    /// Clears the personal details on sign-out, so they don't carry over to the next account.
+    func resetProfile() {
+        age = nil
+        sex = .notSet
+    }
+
+    /// Nil until the user has set their age.
+    var profile: Profile? {
+        age.map { Profile(age: $0, sex: sex) }
     }
 
     /// The settings that sync to the account, for change detection.
     var syncedValues: [String] {
-        [String(age), sex.rawValue, currencyCode, appearance.rawValue, temperatureUnit.rawValue, distanceUnit.rawValue]
+        [age.map(String.init) ?? "", sex.rawValue, currencyCode, appearance.rawValue, temperatureUnit.rawValue, distanceUnit.rawValue]
     }
 
     enum Appearance: String, CaseIterable, Identifiable {

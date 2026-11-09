@@ -72,7 +72,7 @@ final class TrendsViewModel {
     }
 
     func periodDays(in content: Content) -> [DailySummary] {
-        Array(content.days.suffix(period.days))
+        content.days.lastDays(period.days, endingOn: content.days.last?.date ?? .now)
     }
 
     func series(for metric: Metric, in content: Content) -> Series {

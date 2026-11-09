@@ -15,8 +15,12 @@ nonisolated struct Activity: Identifiable, Hashable, Sendable {
     /// Metres, for activities where distance is meaningful.
     let distance: Double?
     let heartRateZones: [ZoneDuration]
+    /// The source's own name for it ("Badminton"), when there is one.
+    var name: String? = nil
 
     var end: Date { start.addingTimeInterval(duration) }
+
+    var title: String { name ?? kind.title }
 }
 
 nonisolated enum ActivityKind: String, CaseIterable, Hashable, Sendable {

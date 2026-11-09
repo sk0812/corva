@@ -14,19 +14,22 @@ struct ActivityRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
             HStack(spacing: Spacing.s) {
-                Image(systemName: activity.kind.symbolName)
+                Image(systemName: activity.symbolName)
                     .font(style == .detailed ? .title3 : .body)
                     .foregroundStyle(CorvaColor.strain)
                     .frame(width: style == .detailed ? 40 : 28, height: style == .detailed ? 40 : 28)
                     .glassEffect(.regular.tint(CorvaColor.strain.opacity(0.18)), in: .circle)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(activity.kind.title).textStyle(.body)
+                    Text(activity.title).textStyle(.body)
                     Text(summary).textStyle(.caption)
                 }
                 Spacer(minLength: Spacing.s)
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(activity.strain, format: .number).textStyle(.smallNumeral)
-                    Text("Strain").textStyle(.label)
+                // Strain comes from heart rate; without it there's nothing honest to show.
+                if activity.averageHeartRate > 0 {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(activity.strain, format: .number).textStyle(.smallNumeral)
+                        Text("Strain").textStyle(.label)
+                    }
                 }
             }
             if style == .detailed {
@@ -43,7 +46,9 @@ struct ActivityRow: View {
                     if activity.maxHeartRate > 0 {
                         detailStat("Max", "\(activity.maxHeartRate) bpm")
                     }
-                    detailStat("Energy", format.energy(activity.energy))
+                    if activity.energy > 0 {
+                        detailStat("Energy", format.energy(activity.energy))
+                    }
                 }
             }
         }
@@ -69,6 +74,21 @@ struct ActivityRow: View {
             parts.append(format.distance(distance))
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+extension Activity {
+    /// A symbol for the named sport when there is one (badminton, hockey…), else the kind's.
+    var symbolName: String {
+        let name = (self.name ?? "").lowercased()
+        let named: [(String, String)] = [
+            ("badminton", "figure.badminton"), ("tennis", "figure.tennis"), ("squash", "figure.squash"),
+            ("hockey", "figure.hockey"), ("football", "figure.soccer"), ("soccer", "figure.soccer"),
+            ("basketball", "figure.basketball"), ("cricket", "figure.cricket"), ("rugby", "figure.rugby"),
+            ("boxing", "figure.boxing"), ("climb", "figure.climbing"), ("row", "figure.rower"),
+            ("dance", "figure.dance"), ("golf", "figure.golf"), ("hiit", "figure.highintensity.intervaltraining"),
+        ]
+        return named.first { name.contains($0.0) }?.1 ?? kind.symbolName
     }
 }
 

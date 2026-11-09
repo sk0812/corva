@@ -9,6 +9,27 @@ Five reviewers went through the app in parallel:
 
 I checked every claim marked ✓ against the code. Findings that more than one reviewer reported are merged. Paths are relative to the repository root.
 
+**Status (10 Nov):**
+- **Pacts are paused.** The tab shows a Coming soon screen, and the pact items below (#1-6) are deferred, untouched.
+- **Fixed:**
+  - #7 privacy copy;
+  - #10 clean sign-out;
+  - #12 failed pushes kept and retried, with pulls merging unsent edits (in memory: an app kill still loses them);
+  - #13 single-flight token refresh, signing out only on a real rejection;
+  - #14 screens reload in place instead of rebuilding;
+  - #15 demo data after re-sign-in;
+  - #16 cold-launch sync, per-operation busy state and no echoed profile pushes;
+  - #18 Today falls back to the latest day, with retry on empty and error states (days without a night are still dropped);
+  - #19 calendar windows and date-keyed pairing;
+  - #20 a 7-reading baseline minimum, with a calibrating note;
+  - #21 Google's sleep totals, classic sleep marked and handled;
+  - #22 sleep debt counted once;
+  - #23 no fake zeros, source workout names;
+  - #26 statistics minimums;
+  - #27 bio age needs your age and explains the missing VO2 max;
+  - #33 the demo notice on Today, Trends and Lab.
+- **Still open (non-pact):** #8, #9, #11, #17 (backend and privacy), #24 (today's partial strain), #25 (daylight saving), and P2 accessibility and design #28-31, #34-37.
+
 **Priority:** P0 means fix before anyone else uses pacts or the app. P1 means fix soon (real-data correctness). P2 means quality, accessibility and polish.
 
 ---

@@ -42,14 +42,19 @@ nonisolated enum Insights {
         static let balancedRange: ClosedRange<Double> = 0.8...1.3
     }
 
-    /// Acute (7-day) versus chronic (28-day) load, from days ordered oldest first.
-    static func trainingLoad(_ days: [DailySummary]) -> TrainingLoad? {
-        guard days.count >= 7 else { return nil }
-        let loads = days.map { Scoring.cardiovascularLoad($0.strain.heartRateZones) }
-        return TrainingLoad(
-            acute: Statistics.mean(Array(loads.suffix(7))),
-            chronic: Statistics.mean(Array(loads.suffix(28)))
-        )
+    /// Acute (last 7 calendar days) versus chronic (last 28) load, from days ordered oldest
+    /// first. Nil until there are 28 days of history and enough days in each window, because
+    /// with less the "chronic" load is mostly the same week and the ratio says nothing.
+    static func trainingLoad(_ days: [DailySummary], calendar: Calendar = .current) -> TrainingLoad? {
+        guard let first = days.first, let last = days.last,
+              let span = calendar.dateComponents([.day], from: first.date, to: last.date).day, span >= 27,
+              let acuteStart = calendar.date(byAdding: .day, value: -6, to: last.date),
+              let chronicStart = calendar.date(byAdding: .day, value: -27, to: last.date) else { return nil }
+        let load = { (day: DailySummary) in Scoring.cardiovascularLoad(day.strain.heartRateZones) }
+        let acute = days.filter { $0.date >= acuteStart }.map(load)
+        let chronic = days.filter { $0.date >= chronicStart }.map(load)
+        guard acute.count >= 4, chronic.count >= 14 else { return nil }
+        return TrainingLoad(acute: Statistics.mean(acute), chronic: Statistics.mean(chronic))
     }
 
     // MARK: - Sleep
@@ -57,7 +62,9 @@ nonisolated enum Insights {
     /// Total shortfall against need across the given nights. Surplus nights don't repay it here;
     /// it shows how much sleep was missed, not a running balance.
     static func sleepDebt(_ nights: [SleepMetrics]) -> TimeInterval {
-        nights.reduce(0) { $0 + max(0, $1.need - $1.timeAsleep) }
+        // Measured against new need only: need also includes repaying earlier debt, and
+        // counting that again would charge the same lost sleep several times.
+        nights.reduce(0) { $0 + max(0, $1.need - $1.debtRepayment - $1.timeAsleep) }
     }
 
     /// Mean duration of each stage across nights.
@@ -114,6 +121,7 @@ nonisolated enum Insights {
 
     nonisolated struct Relationship: Identifiable, Hashable, Sendable {
         enum Strength: String, Sendable {
+            case notEnoughData = "Needs 14+ days"
             case none = "No clear link"
             case weak = "Weak"
             case moderate = "Moderate"
@@ -138,8 +146,12 @@ nonisolated enum Insights {
 
         var r: Double { fit?.correlation ?? 0 }
 
+        /// Pairs needed before a correlation is shown as anything but "not enough data".
+        static let minimumPairs = 14
+
         var strength: Strength {
-            switch abs(r) {
+            guard pairs.count >= Self.minimumPairs else { return .notEnoughData }
+            return switch abs(r) {
             case ..<0.1: .none
             case ..<0.3: .weak
             case ..<0.5: .moderate
@@ -158,12 +170,16 @@ nonisolated enum Insights {
         lag: Int,
         in days: [DailySummary]
     ) -> Relationship {
+        // Paired by date, not position, so a gap in the data never pairs one day with a
+        // day several days later.
+        let calendar = Calendar.current
+        let byDate = Dictionary(days.map { ($0.date, $0) }, uniquingKeysWith: { first, _ in first })
         var pairs: [Relationship.Pair] = []
-        if days.count > lag {
-            for index in 0..<(days.count - lag) {
-                guard let xValue = x.value(in: days[index]), let yValue = y.value(in: days[index + lag]) else { continue }
-                pairs.append(Relationship.Pair(id: index, x: xValue, y: yValue))
-            }
+        for (index, day) in days.enumerated() {
+            guard let laterDate = calendar.date(byAdding: .day, value: lag, to: day.date),
+                  let later = byDate[laterDate],
+                  let xValue = x.value(in: day), let yValue = y.value(in: later) else { continue }
+            pairs.append(Relationship.Pair(id: index, x: xValue, y: yValue))
         }
         return Relationship(
             id: id,

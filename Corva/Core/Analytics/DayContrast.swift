@@ -127,8 +127,12 @@ nonisolated enum DayContrast {
         tags: [Tag] = [],
         calendar: Calendar = .current
     ) -> Result? {
-        // Each candidate needs the day before it.
-        let candidates = Array(days.indices.dropFirst())
+        // Each candidate needs the calendar day before it (not just the previous entry).
+        let dates = Set(days.map(\.date))
+        let candidates = days.indices.filter { index in
+            guard let dayBefore = calendar.date(byAdding: .day, value: -1, to: days[index].date) else { return false }
+            return dates.contains(dayBefore)
+        }
         guard candidates.count >= 12 else { return nil }
 
         let score = { (index: Int) in ranking.metric.value(in: days[index]) ?? 0 }
@@ -190,7 +194,8 @@ nonisolated enum DayContrast {
         calendar: Calendar
     ) -> Double {
         let day = days[index]
-        let previous = days[index - 1]
+        let dayBefore = calendar.date(byAdding: .day, value: -1, to: day.date) ?? day.date
+        let previous = days.last { $0.date == dayBefore } ?? days[index - 1]
         switch kind {
         case .priorStrain:
             return Double(previous.strain.score)

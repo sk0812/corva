@@ -242,7 +242,8 @@ private nonisolated struct MockDataGenerator {
             bedtime: bedtime,
             wakeTime: wakeTime,
             need: need,
-            segments: segments
+            segments: segments,
+            debtRepayment: Scoring.debtRepayment(sleepDebt: sleepDebt)
         )
     }
 

@@ -2,18 +2,21 @@ import SwiftUI
 
 struct BioAgeView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(AppSettings.self) private var settings
     @State private var model = LabViewModel()
 
     var body: some View {
         LoadStateView(model.state) { days in
             ScrollView {
-                if let estimate = model.bioAge(in: days, profile: settings.profile) {
+                if let profile = settings.profile, let estimate = model.bioAge(in: days, profile: profile) {
                     BioAgeContent(
                         estimate: estimate,
-                        history: model.bioAgeHistory(in: days, profile: settings.profile),
-                        profile: settings.profile
+                        history: model.bioAgeHistory(in: days, profile: profile),
+                        profile: profile
                     )
+                } else if settings.profile == nil {
+                    ContentUnavailableView("Add your age", systemImage: "person.crop.circle", description: Text("Bio age compares you with people your age. Set your age in Settings › Profile."))
                 } else {
                     ContentUnavailableView("Not enough data", systemImage: "flask", description: Text("Bio age needs at least two weeks of data."))
                 }
@@ -22,7 +25,7 @@ struct BioAgeView: View {
         .screenBackground(glow: CorvaColor.bioAge)
         .navigationTitle("Bio age")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
@@ -134,6 +137,9 @@ private struct BioAgeContent: View {
 
     private var footnote: String {
         var text = "An estimate from population reference values and activity guidelines, using your last 30 days. Not a medical test."
+        if !estimate.markers.contains(where: { $0.kind == .vo2Max }) {
+            text += " VO2 max isn’t available from your tracker, so it’s left out; it can move bio age by up to 4 years either way."
+        }
         if profile.sex == .notSet {
             text += " Set your sex in Settings for sex-specific references."
         }

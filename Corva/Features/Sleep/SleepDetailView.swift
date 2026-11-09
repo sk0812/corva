@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SleepDetailView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
     @State private var model: SleepDetailViewModel
 
@@ -20,7 +21,7 @@ struct SleepDetailView: View {
         .navigationTitle(Metric.sleep.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitle(format.dayTitle(model.date))
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
@@ -42,7 +43,17 @@ private struct SleepDetailContent: View {
 
             durationCard
             qualityCard
-            stagesCard
+            if sleep.hasStages {
+                stagesCard
+            } else {
+                GlassCard {
+                    VStack(alignment: .leading, spacing: Spacing.s) {
+                        CardHeader(title: "Stages")
+                        Text("Your tracker recorded when you were asleep but not your sleep stages this night, so there’s no hypnogram.")
+                            .textStyle(.caption)
+                    }
+                }
+            }
             fortnightCard
             consistencyCard
         }
@@ -82,9 +93,9 @@ private struct SleepDetailContent: View {
                 CardHeader(title: "Quality")
                 StatGrid {
                     StatTile(label: "Efficiency", value: format.percent(sleep.efficiency), detail: "asleep in bed")
-                    StatTile(label: "Latency", value: format.duration(sleep.latency), detail: "to fall asleep")
-                    StatTile(label: "Wakes", value: "\(sleep.awakenings)", detail: "during the night")
-                    StatTile(label: "Deep + REM", value: format.percent(sleep.restorativeShare), detail: "of time asleep")
+                    StatTile(label: "Latency", value: sleep.hasStages ? format.duration(sleep.latency) : "—", detail: "to fall asleep")
+                    StatTile(label: "Wakes", value: sleep.hasStages ? "\(sleep.awakenings)" : "—", detail: "during the night")
+                    StatTile(label: "Deep + REM", value: sleep.hasStages ? format.percent(sleep.restorativeShare) : "—", detail: "of time asleep")
                     StatTile(label: "Debt · 7d", value: format.duration(content.weeklyDebt), detail: "missed vs need")
                     StatTile(label: "In bed", value: format.duration(sleep.timeInBed))
                 }

@@ -43,13 +43,20 @@ nonisolated struct SleepMetrics: Hashable, Sendable {
     let wakeTime: Date
     /// How much sleep the night called for, given recent strain and sleep debt.
     let need: TimeInterval
-    /// Ordered, gap-free stages covering `bedtime...wakeTime`.
+    /// Ordered stages within `bedtime...wakeTime`.
     let segments: [SleepSegment]
+    /// Time asleep as the source reports it, when it does. Preferred over adding up stages,
+    /// which can have gaps.
+    var reportedTimeAsleep: TimeInterval? = nil
+    /// False for "classic" sleep, where the tracker recorded asleep or awake but no stages.
+    var hasStages = true
+    /// The part of `need` that's repaying earlier sleep debt (not new need).
+    var debtRepayment: TimeInterval = 0
 
     var timeInBed: TimeInterval { wakeTime.timeIntervalSince(bedtime) }
 
     var timeAsleep: TimeInterval {
-        segments.filter(\.stage.isAsleep).reduce(0) { $0 + $1.duration }
+        reportedTimeAsleep ?? segments.filter(\.stage.isAsleep).reduce(0) { $0 + $1.duration }
     }
 
     /// Share of time in bed actually spent asleep, 0-1.

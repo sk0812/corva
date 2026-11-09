@@ -12,7 +12,7 @@ final class StrainDetailViewModel {
         var delta: Double? { day.baseline.delta(for: .strain, in: day) }
         var target: ClosedRange<Int> { Insights.strainTarget(recovery: day.recovery.score) }
         var trainingLoad: Insights.TrainingLoad? { Insights.trainingLoad(history) }
-        var fortnight: [DailySummary] { Array(history.suffix(14)) }
+        var fortnight: [DailySummary] { history.lastDays(14, endingOn: day.date) }
         var averageStrain: Double { Statistics.mean(history.map { Double($0.strain.score) }) }
 
         var totalZoneTime: TimeInterval { strain.heartRateZones.reduce(0) { $0 + $1.duration } }

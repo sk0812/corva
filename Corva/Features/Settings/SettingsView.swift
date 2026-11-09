@@ -24,8 +24,11 @@ struct SettingsView: View {
                 .listRowBackground(CorvaColor.surface)
 
                 Section {
-                    Stepper(value: $settings.age, in: 18...90) {
-                        LabeledContent("Age", value: "\(settings.age)")
+                    Picker("Age", selection: $settings.age) {
+                        Text("Not set").tag(Int?.none)
+                        ForEach(18...90, id: \.self) { age in
+                            Text("\(age)").tag(Int?.some(age))
+                        }
                     }
                     Picker("Sex", selection: $settings.sex) {
                         ForEach(BiologicalSex.allCases) { sex in
@@ -39,18 +42,6 @@ struct SettingsView: View {
                 }
                 .listRowBackground(CorvaColor.surface)
 
-                Section {
-                    Picker("Currency", selection: $settings.currencyCode) {
-                        ForEach(AppSettings.stakeCurrencies, id: \.self) { code in
-                            Text(Locale.current.localizedString(forCurrencyCode: code) ?? code).tag(code)
-                        }
-                    }
-                } header: {
-                    Text("Pacts")
-                } footer: {
-                    Text("For new pacts. Payments aren’t connected yet, so no money moves.")
-                }
-                .listRowBackground(CorvaColor.surface)
 
                 Section("Units") {
                     Picker("Temperature", selection: $settings.temperatureUnit) {

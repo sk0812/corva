@@ -5,17 +5,19 @@ import Observation
 /// The signed-in account: signing in and out, and keeping experiments, pacts and settings in
 /// step with the backend.
 ///
-/// - **Signed out:** Lab and Pacts show demo data.
-/// - **Signing in:** the account's own experiments and pacts replace the demo data. Health data
-///   stays mock until Apple Health is connected.
+/// - **Signed out:** screens show demo data.
+/// - **Signing in:** the account's own experiments replace the demo ones, and with Google
+///   Health connected every screen switches to the user's own health data.
 /// - **Local changes:** pushed as they happen, one at a time and in order, so a tag never
-///   arrives before its experiment.
+///   arrives before its experiment. A push that fails for a temporary reason (offline, server
+///   busy) is kept and retried at the next refresh, and refreshes keep unsent edits.
 /// - **Full pull:** at sign-in, at launch, and from Settings › Sync now.
 @Observable
 final class AccountService {
     private(set) var user: AuthUser?
-    /// A sign-in or a full sync is in progress.
-    private(set) var isWorking = false
+    /// Operations in progress. Several can overlap (a pull and a connect), so it's a count.
+    private(set) var activeOperations = 0
+    var isWorking: Bool { activeOperations > 0 }
     private(set) var lastSynced: Date?
     private(set) var lastError: String?
     /// The Google Health connection as the server reports it. Nil until checked.
@@ -48,6 +50,16 @@ final class AccountService {
     @ObservationIgnored private let demoPacts: [Pact]
     @ObservationIgnored private var queue: Task<Void, Never>?
     @ObservationIgnored private var profilePush: Task<Void, Never>?
+    /// Bumped on sign-in and sign-out. Work started for one session checks it before touching
+    /// anything, so nothing from a previous account lands in the next one.
+    @ObservationIgnored private var sessionEpoch = 0
+    /// Pushes that failed for a temporary reason, oldest first, retried before each pull.
+    @ObservationIgnored private var failedPushes: [PendingPush] = []
+    /// Experiments with a push queued or waiting to retry, so a pull doesn't overwrite them.
+    @ObservationIgnored private var pendingExperiments: [UUID: Int] = [:]
+    /// The settings last sent to or received from the account, so applying remote values
+    /// doesn't echo straight back.
+    @ObservationIgnored private var lastProfileValues: [String] = []
     @ObservationIgnored private let demoProvider: any HealthDataProvider
     @ObservationIgnored private let recordCache: DailyRecordCache
 
@@ -92,11 +104,16 @@ final class AccountService {
     /// that only decides which data screens load first.
     private static let connectedKey = "corva.googleHealthConnected"
 
-    /// At launch: pull everything if a session was restored.
+    /// At launch: pull everything if a session was restored, then sync Google Health if the
+    /// last sync is stale.
     func start() async {
         guard isSignedIn else { return }
         await refresh()
+        await syncIfStale()
     }
+
+    private func beginWork() { activeOperations += 1 }
+    private func endWork() { activeOperations = max(activeOperations - 1, 0) }
 
     // MARK: - Signing in and out
 
@@ -111,9 +128,9 @@ final class AccountService {
 
     /// Emails a one-time code. Returns whether it was sent.
     func sendEmailCode(to email: String) async -> Bool {
-        isWorking = true
+        beginWork()
         lastError = nil
-        defer { isWorking = false }
+        defer { endWork() }
         do {
             try await client.sendEmailCode(to: email)
             return true
@@ -129,26 +146,42 @@ final class AccountService {
     }
 
     func signOut() async {
+        client.signOut()
+        resetSession()
+        lastError = nil
+        await dataChanged()
+    }
+
+    /// Forgets everything belonging to the signed-in account on this phone, and stops any
+    /// work still queued for it.
+    private func resetSession() {
+        sessionEpoch += 1
         queue?.cancel()
+        queue = nil
         profilePush?.cancel()
-        await client.signOut()
+        profilePush = nil
+        failedPushes = []
+        pendingExperiments = [:]
+        lastProfileValues = []
         user = nil
         lastSynced = nil
-        lastError = nil
         googleHealth = nil
+        googleHealthConnectError = nil
         UserDefaults.standard.removeObject(forKey: Self.connectedKey)
+        settings.resetProfile()
         experiments.replace(with: demoExperiments)
         pacts.replace(with: demoPacts)
-        await dataChanged()
     }
 
     @discardableResult
     private func signIn(_ operation: () async throws -> AuthUser) async -> Bool {
-        isWorking = true
+        beginWork()
         lastError = nil
-        defer { isWorking = false }
+        defer { endWork() }
         do {
-            user = try await operation()
+            let signedIn = try await operation()
+            sessionEpoch += 1
+            user = signedIn
         } catch {
             record(error)
             return false
@@ -156,32 +189,64 @@ final class AccountService {
         experiments.replace(with: [])
         pacts.replace(with: [])
         await refresh(isFirstSignIn: true)
+        // Always reload: the screens were showing demo data until now.
+        await dataChanged()
         return true
     }
 
     // MARK: - Pulling
 
-    /// Pulls the profile, experiments and pacts. Pending pushes finish first.
+    /// Pulls the profile, experiments and pacts. Queued and previously failed pushes go first,
+    /// and anything still unsent is kept over the server's copy.
     func refresh(isFirstSignIn: Bool = false) async {
         guard let user else { return }
-        isWorking = true
-        defer { isWorking = false }
+        let epoch = sessionEpoch
+        beginWork()
+        defer { endWork() }
+        // A settings change still waiting out its debounce goes now, so the pull can't revert it.
+        if profilePush != nil {
+            profilePush?.cancel()
+            profilePush = nil
+            pushProfile()
+        }
         await queue?.value
+        await retryFailedPushes()
         do {
             try await loadGoogleHealthStatus()
+            guard epoch == sessionEpoch else { return }
             try await pullProfile(pushLocalIfNew: isFirstSignIn)
             let rows = try await client.select("experiments", query: [
                 URLQueryItem(name: "select", value: ExperimentRow.select),
                 URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "order", value: "created_at.desc"),
             ], as: ExperimentRow.self)
-            experiments.replace(with: rows.compactMap(\.experiment))
+            guard epoch == sessionEpoch else { return }
+            experiments.replace(with: merged(pulled: rows.compactMap(\.experiment)))
             try await pullPacts(for: user.id)
+            guard epoch == sessionEpoch else { return }
             lastSynced = .now
             lastError = nil
         } catch {
+            guard epoch == sessionEpoch else { return }
             record(error)
         }
+    }
+
+    /// The server's experiments, except where this phone has edits not yet sent: those keep
+    /// the local version (or stay deleted).
+    private func merged(pulled: [Experiment]) -> [Experiment] {
+        let local = Dictionary(experiments.experiments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [Experiment] = []
+        for experiment in pulled {
+            if pendingExperiments[experiment.id] != nil {
+                if let mine = local[experiment.id] { result.append(mine) }
+            } else {
+                result.append(experiment)
+            }
+        }
+        let pulledIDs = Set(pulled.map(\.id))
+        let unsent = experiments.experiments.filter { pendingExperiments[$0.id] != nil && !pulledIDs.contains($0.id) }
+        return unsent + result
     }
 
     private func pullProfile(pushLocalIfNew: Bool) async throws {
@@ -200,6 +265,7 @@ final class AccountService {
         if let birthYear = remote.birthYear {
             settings.age = min(max(currentYear - birthYear, 18), 90)
         }
+        lastProfileValues = settings.syncedValues
     }
 
     private func pullPacts(for me: UUID) async throws {
@@ -239,9 +305,9 @@ final class AccountService {
     /// Connects Google Health: the server makes the consent link, `authenticate` shows it,
     /// and the server stores the tokens and starts pulling history.
     func connectGoogleHealth(authenticate: (URL) async throws -> URL) async {
-        isWorking = true
+        beginWork()
         googleHealthConnectError = nil
-        defer { isWorking = false }
+        defer { endWork() }
         do {
             let response = try await client.function("google-health/connect", EmptyRequest(), returning: ConnectResponse.self)
             let callback = try await authenticate(response.url)
@@ -262,6 +328,7 @@ final class AccountService {
             await refresh()
         } catch {
             if let authError = error as? ASWebAuthenticationSessionError, authError.code == .canceledLogin { return }
+            if error is CancellationError { return }
             googleHealthConnectError = error.localizedDescription
         }
     }
@@ -269,12 +336,13 @@ final class AccountService {
     /// Pulls the last `days` days from Google now.
     func syncGoogleHealth(days: Int = 7) async {
         guard usesRealData else { return }
-        isWorking = true
-        defer { isWorking = false }
+        beginWork()
+        defer { endWork() }
         do {
-            _ = try await client.function("google-health/sync", SyncRequest(days: days), returning: SyncResponse.self)
+            let response = try await client.function("google-health/sync", SyncRequest(days: days), returning: SyncResponse.self)
             try await loadGoogleHealthStatus()
-            await dataChanged()
+            // Reload only if the sync actually wrote something.
+            if response.days > 0 { await dataChanged() }
         } catch {
             record(error)
             try? await loadGoogleHealthStatus()
@@ -291,8 +359,8 @@ final class AccountService {
 
     /// Revokes Google's access and deletes the synced data from the server.
     func disconnectGoogleHealth() async {
-        isWorking = true
-        defer { isWorking = false }
+        beginWork()
+        defer { endWork() }
         do {
             _ = try await client.function("google-health/disconnect", EmptyRequest(), returning: DisconnectResponse.self)
             await setGoogleHealth(GoogleHealthStatus(connected: false))
@@ -327,20 +395,22 @@ final class AccountService {
     /// Call when a synced setting changes. Pushes a second later, so a run of taps on the
     /// age stepper sends one update.
     func settingsChanged() {
-        guard isSignedIn else { return }
+        guard isSignedIn, settings.syncedValues != lastProfileValues else { return }
         profilePush?.cancel()
         profilePush = Task {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
+            profilePush = nil
             pushProfile()
         }
     }
 
     private func pushProfile() {
         guard let user else { return }
+        lastProfileValues = settings.syncedValues
         let record = ProfileRecord(
             displayName: nil,
-            birthYear: currentYear - settings.age,
+            birthYear: settings.age.map { currentYear - $0 },
             sex: settings.sex.rawValue,
             currency: settings.currencyCode,
             appearance: settings.appearance.rawValue,
@@ -376,20 +446,76 @@ final class AccountService {
 
     // MARK: - Pushing
 
-    /// Runs `operation` after every earlier push has finished.
-    private func enqueue(_ operation: @escaping @MainActor () async throws -> Void) {
+    /// A push waiting to be sent, kept so it can be retried.
+    private struct PendingPush {
+        let experimentID: UUID?
+        let run: @MainActor () async throws -> Void
+        var attempts = 0
+    }
+
+    /// Runs `operation` after every earlier push has finished. Pushes about an experiment
+    /// mark it as pending until they succeed, so pulls keep the local version.
+    private func enqueue(experimentID: UUID? = nil, _ operation: @escaping @MainActor () async throws -> Void) {
         guard isSignedIn else { return }
+        let epoch = sessionEpoch
+        if let experimentID { pendingExperiments[experimentID, default: 0] += 1 }
         let previous = queue
         queue = Task {
             await previous?.value
-            guard !Task.isCancelled else { return }
-            do {
-                try await operation()
-                lastSynced = .now
-            } catch {
+            guard !Task.isCancelled, epoch == sessionEpoch else { return }
+            await attempt(PendingPush(experimentID: experimentID, run: operation))
+        }
+    }
+
+    /// Sends one push. On success it's done; on a temporary failure it waits for the next
+    /// refresh; on a permanent one (the server rejected it) it's dropped and reported.
+    private func attempt(_ push: PendingPush) async {
+        do {
+            try await push.run()
+            finish(push)
+            lastSynced = .now
+        } catch {
+            var retry = push
+            retry.attempts += 1
+            if Self.isTemporary(error), retry.attempts < 5 {
+                failedPushes.append(retry)
+                lastError = "Some changes haven’t synced yet. Corva will retry."
+            } else {
+                finish(push)
                 record(error)
             }
         }
+    }
+
+    private func finish(_ push: PendingPush) {
+        guard let id = push.experimentID, let count = pendingExperiments[id] else { return }
+        pendingExperiments[id] = count > 1 ? count - 1 : nil
+    }
+
+    /// Retries failed pushes in order, stopping at the first that fails again so they stay in
+    /// sequence.
+    private func retryFailedPushes() async {
+        let epoch = sessionEpoch
+        while let next = failedPushes.first, epoch == sessionEpoch {
+            failedPushes.removeFirst()
+            let before = failedPushes.count
+            await attempt(next)
+            if failedPushes.count > before {
+                // It failed again and went to the back; restore the order and stop.
+                let retried = failedPushes.removeLast()
+                failedPushes.insert(retried, at: 0)
+                return
+            }
+        }
+    }
+
+    /// Offline, timed out, rate limited or a server error: worth retrying.
+    private static func isTemporary(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        if case BackendError.server(let status, _) = error {
+            return status == 408 || status == 429 || status >= 500
+        }
+        return false
     }
 
     private func record(_ error: Error) {
@@ -397,12 +523,10 @@ final class AccountService {
             return
         }
         if error is CancellationError { return }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return }
         if let backendError = error as? BackendError, backendError == .notSignedIn, user != nil {
             // The session expired or was revoked elsewhere.
-            user = nil
-            UserDefaults.standard.removeObject(forKey: Self.connectedKey)
-            experiments.replace(with: demoExperiments)
-            pacts.replace(with: demoPacts)
+            resetSession()
             Task { await dataChanged() }
             lastError = "You were signed out. Sign in again to sync."
             return
@@ -414,20 +538,20 @@ final class AccountService {
 extension AccountService: ExperimentSyncing {
     func experimentSaved(_ experiment: Experiment) {
         let record = ExperimentRecord(experiment)
-        enqueue { [client] in
+        enqueue(experimentID: experiment.id) { [client] in
             try await client.upsert("experiments", [record], onConflict: "id")
         }
     }
 
     func experimentDeleted(_ id: Experiment.ID) {
-        enqueue { [client] in
+        enqueue(experimentID: id) { [client] in
             try await client.update("experiments", SoftDeleteRecord(), filters: [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")])
         }
     }
 
     func experimentTag(evening: Date, isOn: Bool, in id: Experiment.ID) {
         let record = ExperimentTagRecord(experimentID: id, evening: DayCoding.string(from: evening))
-        enqueue { [client] in
+        enqueue(experimentID: id) { [client] in
             if isOn {
                 try await client.upsert("experiment_tags", [record], onConflict: "experiment_id,evening", ignoreDuplicates: true)
             } else {

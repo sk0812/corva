@@ -4,6 +4,7 @@ import SwiftUI
 struct ExperimentDetailView: View {
     let id: Experiment.ID
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.dismiss) private var dismiss
     @Environment(ExperimentStore.self) private var store
     @State private var model = LabViewModel()
@@ -51,7 +52,7 @@ struct ExperimentDetailView: View {
         }
         .screenBackground(glow: glow)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 
     private var glow: Color? {

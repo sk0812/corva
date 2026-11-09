@@ -7,8 +7,10 @@ final class TodayViewModel {
         let day: DailySummary
         /// Up to 30 days ending on `day`, oldest first.
         let history: [DailySummary]
+        /// Today was asked for but last night hasn't synced, so this is the latest day there is.
+        var isEarlierDay = false
 
-        var week: [DailySummary] { Array(history.suffix(7)) }
+        var week: [DailySummary] { history.lastDays(7, endingOn: day.date) }
 
         /// The day's value minus its 30-day baseline.
         func delta(_ metric: Metric) -> Double? {
@@ -58,11 +60,18 @@ final class TodayViewModel {
     func load(using provider: any HealthDataProvider) async {
         do {
             let history = try await provider.summaries(endingOn: date, count: Baseline.windowDays, calendar: calendar)
-            guard let day = history.last, calendar.isDate(day.date, inSameDayAs: date) else {
+            guard let day = history.last else {
                 state = .empty
                 return
             }
-            state = .loaded(Content(day: day, history: history))
+            if calendar.isDate(day.date, inSameDayAs: date) {
+                state = .loaded(Content(day: day, history: history))
+            } else if isToday, let gap = calendar.dateComponents([.day], from: day.date, to: date).day, gap <= 3 {
+                // Before last night syncs, show the latest day rather than nothing.
+                state = .loaded(Content(day: day, history: history, isEarlierDay: true))
+            } else {
+                state = .empty
+            }
         } catch {
             state = .failed(error.localizedDescription)
         }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BestDaysView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(ExperimentStore.self) private var experiments
     @State private var model = LabViewModel()
     @State private var ranking: DayContrast.Ranking = .recovery
@@ -31,7 +32,7 @@ struct BestDaysView: View {
         .navigationTitle("Best vs worst days")
         .navigationBarTitleDisplayMode(.inline)
         .sensoryFeedback(.selection, trigger: ranking)
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StrainDetailView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
     @State private var model: StrainDetailViewModel
 
@@ -19,7 +20,7 @@ struct StrainDetailView: View {
         .navigationTitle(Metric.strain.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitle(format.dayTitle(model.date))
-        .task { await model.load(using: provider) }
+        .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
@@ -84,8 +85,8 @@ private struct StrainDetailContent: View {
                 StatTile(label: "Active", value: format.value(strain.activeEnergy, for: .strain), unit: "kcal")
                 StatTile(label: "Steps", value: format.steps(strain.steps))
                 StatTile(label: "Activities", value: "\(strain.activities.count)")
-                StatTile(label: "Avg HR", value: "\(strain.averageHeartRate)", unit: "bpm")
-                StatTile(label: "Max HR", value: "\(strain.maxHeartRate)", unit: "bpm")
+                StatTile(label: "Avg HR", value: strain.averageHeartRate > 0 ? "\(strain.averageHeartRate)" : "—", unit: strain.averageHeartRate > 0 ? "bpm" : nil)
+                StatTile(label: "Max HR", value: strain.maxHeartRate > 0 ? "\(strain.maxHeartRate)" : "—", unit: strain.maxHeartRate > 0 ? "bpm" : nil)
                 StatTile(label: "Zone 3+", value: format.duration(content.hardZoneTime))
             }
         }
@@ -178,7 +179,8 @@ private struct HeartRateZoneBars: View {
 
     var body: some View {
         VStack(spacing: Spacing.s) {
-            ForEach(zones.sorted { $0.zone > $1.zone }) { zone in
+            // Zone 1 is left out when the source doesn't report it, rather than shown as 0.
+            ForEach(zones.filter { $0.zone != .one || $0.duration > 0 }.sorted { $0.zone > $1.zone }) { zone in
                 HStack(spacing: Spacing.s) {
                     Text(zone.zone.title)
                         .font(.caption)

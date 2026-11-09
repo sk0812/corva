@@ -50,6 +50,11 @@ final class SupabaseClient {
     /// The PKCE verifier for a Google sign-in in progress.
     private var pendingVerifier: String?
 
+    /// The token refresh in flight, shared by every caller that needs a fresh token. Supabase
+    /// rotates refresh tokens, so two parallel refreshes with the same token would make one
+    /// fail and sign the user out.
+    private var refreshTask: Task<AuthSession, Error>?
+
     init(
         baseURL: URL = BackendConfig.projectURL,
         publishableKey: String = BackendConfig.publishableKey,
@@ -120,12 +125,21 @@ final class SupabaseClient {
 
     // MARK: - Session
 
-    func signOut() async {
-        if session != nil {
-            _ = try? await send("POST", path: "auth/v1/logout", body: nil)
-        }
+    /// Forgets the session on this phone straight away, then tells the server in the
+    /// background. `scope=local` ends only this device's session, not every device's.
+    func signOut() {
+        guard let ending = session else { return }
         session = nil
+        refreshTask = nil
         keychain.delete()
+        var components = URLComponents(url: baseURL.appending(path: "auth/v1/logout"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "scope", value: "local")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(ending.accessToken)", forHTTPHeaderField: "Authorization")
+        let urlSession = urlSession
+        Task.detached { _ = try? await urlSession.data(for: request) }
     }
 
     /// An access token that's valid for at least another minute, refreshing if needed.
@@ -134,16 +148,30 @@ final class SupabaseClient {
         if session.expiresAt.timeIntervalSinceNow > 60 {
             return session.accessToken
         }
-        do {
-            _ = try await requestSession(grantType: "refresh_token", body: ["refresh_token": session.refreshToken])
-        } catch BackendError.server(let status, _) where (400..<500).contains(status) {
-            // The refresh token was revoked or expired: the user has to sign in again.
-            self.session = nil
-            keychain.delete()
-            throw BackendError.notSignedIn
+        if let refreshTask {
+            return try await refreshTask.value.accessToken
         }
-        guard let refreshed = self.session else { throw BackendError.notSignedIn }
-        return refreshed.accessToken
+        let sentToken = session.refreshToken
+        let task = Task { () throws -> AuthSession in
+            do {
+                _ = try await requestSession(grantType: "refresh_token", body: ["refresh_token": sentToken])
+            } catch BackendError.server(let status, _) where status == 400 || status == 401 {
+                // The refresh token was revoked or already used up: sign in again. Only clear
+                // the session if nothing replaced it in the meantime.
+                if self.session?.refreshToken == sentToken {
+                    self.session = nil
+                    keychain.delete()
+                }
+                throw BackendError.notSignedIn
+            }
+            // Anything else (offline, 429, 5xx) is temporary: keep the session and let the
+            // caller retry later.
+            guard let refreshed = self.session else { throw BackendError.notSignedIn }
+            return refreshed
+        }
+        refreshTask = task
+        defer { if refreshTask == task { refreshTask = nil } }
+        return try await task.value.accessToken
     }
 
     private func requestSession(grantType: String, body: [String: String]) async throws -> AuthUser {
@@ -257,7 +285,8 @@ final class SupabaseClient {
         query: [URLQueryItem] = [],
         body: Data?,
         prefer: String? = nil,
-        authenticated: Bool = true
+        authenticated: Bool = true,
+        retryingUnauthorized: Bool = true
     ) async throws -> Data {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }
@@ -274,6 +303,15 @@ final class SupabaseClient {
 
         let (data, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw BackendError.invalidResponse }
+        // An access token the server no longer accepts (expired early, clock skew): refresh
+        // once and retry.
+        if http.statusCode == 401, authenticated, retryingUnauthorized, session != nil {
+            session?.expiresAt = .distantPast
+            return try await send(
+                method, path: path, query: query, body: body, prefer: prefer,
+                authenticated: true, retryingUnauthorized: false
+            )
+        }
         guard (200..<300).contains(http.statusCode) else {
             throw BackendError.server(status: http.statusCode, message: Self.errorMessage(from: data, status: http.statusCode))
         }
