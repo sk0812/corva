@@ -52,9 +52,9 @@ struct TodayView: View {
         .task(id: dataVersion) { await model.load(using: provider) }
     }
 
-    /// Pulls the latest from Google Health (when connected), then reloads.
+    /// Pulls the latest from Google Health and Apple Health (when connected), then reloads.
     private func refresh() async {
-        await account.syncGoogleHealth(days: 3)
+        await account.refreshHealthData()
         await model.load(using: provider)
     }
 

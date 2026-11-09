@@ -11,8 +11,8 @@ struct DemoDataNotice: View {
             ScreenNotice(
                 symbol: "sparkles",
                 text: account.isSignedIn
-                    ? "Demo data. Connect Google Health in Settings to see yours."
-                    : "Demo data. Sign in and connect Google Health in Settings to see yours."
+                    ? "Demo data. Connect Google Health or Apple Health in Settings to see yours."
+                    : "Demo data. Connect Apple Health, or sign in for Google Health, in Settings to see yours."
             )
         }
     }

@@ -28,18 +28,38 @@ final class AccountService {
     /// they reload.
     private(set) var dataVersion = 0
 
+    /// Whether Apple Health on this phone is a data source. Needs no account. Stored on this
+    /// device only, like the data itself.
+    private(set) var appleHealthEnabled: Bool {
+        didSet { UserDefaults.standard.set(appleHealthEnabled, forKey: Self.appleHealthKey) }
+    }
+    /// Why the last attempt to connect Apple Health failed.
+    private(set) var appleHealthError: String?
+
     var isSignedIn: Bool { user != nil }
 
-    /// Real data needs an account with Google Health connected; otherwise screens show demo data.
-    var usesRealData: Bool { isSignedIn && googleHealth?.connected == true }
+    /// Whether Google Health data from the account is in use.
+    var usesGoogleHealth: Bool { isSignedIn && googleHealth?.connected == true }
+
+    /// Real data needs Google Health on an account, or Apple Health on this phone; otherwise
+    /// screens show demo data.
+    var usesRealData: Bool { usesGoogleHealth || appleHealthEnabled }
 
     /// Where every screen's health data comes from right now.
     var healthDataProvider: any HealthDataProvider {
         guard usesRealData else { return demoProvider }
-        let status = googleHealth
-        return RemoteHealthDataProvider(cache: recordCache) { source in
-            source == .googleHealth ? .connected(lastSync: status?.lastSynced ?? .now) : .notConnected
-        }
+        let google = usesGoogleHealth ? googleHealth : nil
+        let apple = appleHealthEnabled
+        return RemoteHealthDataProvider(
+            cache: recordCache,
+            fetch: { [weak self] from in try await self?.fetchRecords(from: from) ?? [] },
+            status: { source in
+                switch source {
+                case .googleHealth: google.map { .connected(lastSync: $0.lastSynced ?? .now) } ?? .notConnected
+                case .appleHealth: apple ? .connected(lastSync: .now) : .notConnected
+                }
+            }
+        )
     }
 
     @ObservationIgnored private let client: SupabaseClient
@@ -61,7 +81,8 @@ final class AccountService {
     /// doesn't echo straight back.
     @ObservationIgnored private var lastProfileValues: [String] = []
     @ObservationIgnored private let demoProvider: any HealthDataProvider
-    @ObservationIgnored private let recordCache: DailyRecordCache
+    @ObservationIgnored private let recordCache = DailyRecordCache()
+    @ObservationIgnored private let appleHealth = AppleHealthSource()
 
     init(
         client: SupabaseClient,
@@ -72,15 +93,7 @@ final class AccountService {
     ) {
         self.client = client
         self.demoProvider = demoProvider
-        let fetchRecords: @MainActor @Sendable (String) async throws -> [DailyRecordRow] = { [client] from in
-            try await client.select("daily_records", query: [
-                URLQueryItem(name: "select", value: "*"),
-                URLQueryItem(name: "source", value: "eq.google_health"),
-                URLQueryItem(name: "date", value: "gte.\(from)"),
-                URLQueryItem(name: "order", value: "date.asc"),
-            ], as: DailyRecordRow.self, convertingSnakeCase: true)
-        }
-        recordCache = DailyRecordCache(fetch: fetchRecords)
+        appleHealthEnabled = AppleHealthSource.isAvailable && UserDefaults.standard.bool(forKey: Self.appleHealthKey)
         self.settings = settings
         self.experiments = experiments
         self.pacts = pacts
@@ -103,6 +116,7 @@ final class AccountService {
     /// Whether Google Health was connected when the app last checked. Not sensitive: a flag
     /// that only decides which data screens load first.
     private static let connectedKey = "corva.googleHealthConnected"
+    private static let appleHealthKey = "corva.appleHealthEnabled"
 
     /// At launch: pull everything if a session was restored, then sync Google Health if the
     /// last sync is stale.
@@ -335,7 +349,7 @@ final class AccountService {
 
     /// Pulls the last `days` days from Google now.
     func syncGoogleHealth(days: Int = 7) async {
-        guard usesRealData else { return }
+        guard usesGoogleHealth else { return }
         beginWork()
         defer { endWork() }
         do {
@@ -352,7 +366,7 @@ final class AccountService {
     /// When the app comes to the foreground: sync if the last one was over 30 minutes ago.
     func syncIfStale() async {
         // Wait for the real status (the launch guess has no dates), then sync if it's stale.
-        guard usesRealData, !isWorking, googleHealth?.connectedAt != nil else { return }
+        guard usesGoogleHealth, !isWorking, googleHealth?.connectedAt != nil else { return }
         if let last = googleHealth?.lastSynced, Date.now.timeIntervalSince(last) < 30 * 60 { return }
         await syncGoogleHealth(days: 3)
     }
@@ -374,13 +388,13 @@ final class AccountService {
         await setGoogleHealth(rows.first.map(GoogleHealthStatus.init) ?? GoogleHealthStatus(connected: false))
     }
 
-    /// Records the connection status, and reloads the screens if that switches them between
-    /// demo and real data.
+    /// Records the connection status, and reloads the screens if Google Health data comes into
+    /// use or drops out.
     private func setGoogleHealth(_ status: GoogleHealthStatus) async {
-        let wasReal = usesRealData
+        let wasUsing = usesGoogleHealth
         googleHealth = status
         UserDefaults.standard.set(status.connected, forKey: Self.connectedKey)
-        if usesRealData != wasReal {
+        if usesGoogleHealth != wasUsing {
             await dataChanged()
         }
     }
@@ -388,6 +402,67 @@ final class AccountService {
     private func dataChanged() async {
         await recordCache.invalidate()
         dataVersion += 1
+    }
+
+    // MARK: - Apple Health
+
+    /// Shows Apple's permission sheet, then switches the screens to Apple Health data.
+    func connectAppleHealth() async {
+        appleHealthError = nil
+        guard AppleHealthSource.isAvailable else {
+            appleHealthError = "Apple Health isn’t available on this device."
+            return
+        }
+        do {
+            try await appleHealth.requestAccess()
+        } catch {
+            appleHealthError = error.localizedDescription
+            return
+        }
+        appleHealthEnabled = true
+        await dataChanged()
+    }
+
+    /// Stops reading Apple Health. Nothing to delete: the data never left the phone.
+    func disconnectAppleHealth() async {
+        appleHealthEnabled = false
+        appleHealthError = nil
+        await dataChanged()
+    }
+
+    /// Pull to refresh: syncs Google Health and rereads Apple Health.
+    func refreshHealthData() async {
+        await syncGoogleHealth(days: 3)
+        if appleHealthEnabled { await dataChanged() }
+    }
+
+    /// When the app comes to the foreground: reload Apple Health if it was last read over
+    /// 15 minutes ago, so a night the watch just synced shows up.
+    func reloadAppleHealthIfStale() async {
+        guard appleHealthEnabled else { return }
+        if let last = await recordCache.lastFetched, Date.now.timeIntervalSince(last) < 15 * 60 { return }
+        await dataChanged()
+    }
+
+    /// Records from every connected source, merged.
+    private func fetchRecords(from: String) async throws -> [DailyRecordRow] {
+        var appleRows: Task<[DailyRecordRow], Error>?
+        if appleHealthEnabled, let start = DayCoding.date(from: from) {
+            let maxHeartRate = settings.age.map { 208 - 0.7 * Double($0) } ?? 190
+            appleRows = Task { [appleHealth] in
+                try await appleHealth.records(from: start, maxHeartRate: maxHeartRate)
+            }
+        }
+        var googleRows: [DailyRecordRow] = []
+        if usesGoogleHealth {
+            googleRows = try await client.select("daily_records", query: [
+                URLQueryItem(name: "select", value: "*"),
+                URLQueryItem(name: "source", value: "eq.google_health"),
+                URLQueryItem(name: "date", value: "gte.\(from)"),
+                URLQueryItem(name: "order", value: "date.asc"),
+            ], as: DailyRecordRow.self, convertingSnakeCase: true)
+        }
+        return DailyRecordMerger.merge(google: googleRows, apple: try await appleRows?.value ?? [])
     }
 
     // MARK: - Tagging from outside the app

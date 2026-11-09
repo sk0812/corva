@@ -207,46 +207,70 @@ nonisolated enum ISODate {
 }
 
 /// Holds the last pull of daily records and the summaries built from them, so every screen
-/// doesn't refetch. Refreshed after five minutes or when a sync finishes.
+/// doesn't refetch. Refreshed after five minutes or when the data changes (a sync, a source
+/// connected or disconnected).
 actor DailyRecordCache {
     /// Enough for 90-day screens plus a 30-day baseline warm-up.
     static let windowDays = 130
 
-    /// Runs on the main actor, where the Supabase client lives.
-    private let fetch: @MainActor @Sendable (_ from: String) async throws -> [DailyRecordRow]
+    /// Reads the records from `from` (a yyyy-MM-dd day) onwards, from every connected source.
+    typealias Fetch = @MainActor @Sendable (_ from: String) async throws -> [DailyRecordRow]
+
     private var summaries: [DailySummary]?
     private var fetchedAt: Date?
+    /// The load in progress, shared by every screen that asks meanwhile.
+    private var loading: Task<[DailySummary], Error>?
+    /// Bumped by `invalidate()`, so a load that started before it isn't kept.
+    private var generation = 0
 
-    init(fetch: @escaping @MainActor @Sendable (_ from: String) async throws -> [DailyRecordRow]) {
-        self.fetch = fetch
-    }
-
-    func allSummaries() async throws -> [DailySummary] {
+    func allSummaries(fetch: @escaping Fetch) async throws -> [DailySummary] {
         if let summaries, let fetchedAt, Date.now.timeIntervalSince(fetchedAt) < 300 {
             return summaries
         }
+        if let loading { return try await loading.value }
+
         let calendar = Calendar.current
         let from = calendar.date(byAdding: .day, value: -Self.windowDays, to: calendar.startOfDay(for: .now)) ?? .now
-        let rows = try await fetch(DayCoding.string(from: from, calendar: calendar))
-        let built = DailyRecordMapper.summaries(from: rows, calendar: calendar)
-        summaries = built
-        fetchedAt = .now
-        return built
+        let task = Task {
+            let rows = try await fetch(DayCoding.string(from: from, calendar: calendar))
+            return DailyRecordMapper.summaries(from: rows, calendar: calendar)
+        }
+        let started = generation
+        loading = task
+        do {
+            let built = try await task.value
+            if generation == started {
+                summaries = built
+                fetchedAt = .now
+                loading = nil
+            }
+            return built
+        } catch {
+            if generation == started { loading = nil }
+            throw error
+        }
     }
 
+    /// When the summaries were last built, if they're still held.
+    var lastFetched: Date? { fetchedAt }
+
     func invalidate() {
+        generation += 1
         summaries = nil
         fetchedAt = nil
+        loading = nil
     }
 }
 
-/// Health data from the user's own synced records.
+/// Health data from the user's own records: Google Health synced to their account, Apple
+/// Health on this phone, or both.
 nonisolated struct RemoteHealthDataProvider: HealthDataProvider {
     let cache: DailyRecordCache
+    let fetch: DailyRecordCache.Fetch
     let status: @Sendable (DataSource) async -> ConnectionStatus
 
     func summaries(from start: Date, through end: Date) async throws -> [DailySummary] {
-        try await cache.allSummaries().filter { $0.date >= start && $0.date <= end }
+        try await cache.allSummaries(fetch: fetch).filter { $0.date >= start && $0.date <= end }
     }
 
     func connectionStatus(for source: DataSource) async -> ConnectionStatus {

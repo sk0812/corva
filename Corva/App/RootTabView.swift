@@ -43,6 +43,7 @@ struct RootTabView: View {
             if phase == .active {
                 Task {
                     await account.syncIfStale()
+                    await account.reloadAppleHealthIfStale()
                     await checkIn.reschedule()
                 }
             }
