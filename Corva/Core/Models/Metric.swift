@@ -49,7 +49,8 @@ nonisolated enum Metric: String, CaseIterable, Identifiable, Hashable, Sendable 
     /// Scores are 0-100 composites computed by Corva; everything else is a measured vital.
     var isScore: Bool { Metric.scores.contains(self) }
 
-    func value(in summary: DailySummary) -> Double {
+    /// Nil when the day has no reading for this metric.
+    func value(in summary: DailySummary) -> Double? {
         switch self {
         case .recovery: Double(summary.recovery.score)
         case .strain: Double(summary.strain.score)
@@ -79,6 +80,6 @@ nonisolated struct DatedValue: Identifiable, Hashable, Sendable {
 
 extension Metric {
     nonisolated func series(in summaries: [DailySummary]) -> [DatedValue] {
-        summaries.map { DatedValue(date: $0.date, value: value(in: $0)) }
+        summaries.compactMap { summary in value(in: summary).map { DatedValue(date: summary.date, value: $0) } }
     }
 }

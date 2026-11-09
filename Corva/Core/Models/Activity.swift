@@ -26,6 +26,8 @@ nonisolated enum ActivityKind: String, CaseIterable, Hashable, Sendable {
     case walk
     case swim
     case yoga
+    /// Any other workout the source records (HIIT, tennis, rowing…).
+    case other
 
     var title: String {
         switch self {
@@ -35,6 +37,7 @@ nonisolated enum ActivityKind: String, CaseIterable, Hashable, Sendable {
         case .walk: "Walk"
         case .swim: "Swim"
         case .yoga: "Yoga"
+        case .other: "Workout"
         }
     }
 }

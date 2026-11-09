@@ -97,13 +97,15 @@ nonisolated enum Insights {
         let symbols = calendar.shortStandaloneWeekdaySymbols
         return (0..<7).compactMap { position in
             let weekday = (calendar.firstWeekday - 1 + position) % 7 + 1
-            guard let group = grouped[weekday], !group.isEmpty else { return nil }
+            guard let group = grouped[weekday] else { return nil }
+            let values = group.compactMap(metric.value(in:))
+            guard !values.isEmpty else { return nil }
             return WeekdayAverage(
                 weekday: weekday,
                 position: position,
                 shortName: symbols[weekday - 1],
-                mean: Statistics.mean(group.map(metric.value(in:))),
-                count: group.count
+                mean: Statistics.mean(values),
+                count: values.count
             )
         }
     }
@@ -159,11 +161,8 @@ nonisolated enum Insights {
         var pairs: [Relationship.Pair] = []
         if days.count > lag {
             for index in 0..<(days.count - lag) {
-                pairs.append(Relationship.Pair(
-                    id: index,
-                    x: x.value(in: days[index]),
-                    y: y.value(in: days[index + lag])
-                ))
+                guard let xValue = x.value(in: days[index]), let yValue = y.value(in: days[index + lag]) else { continue }
+                pairs.append(Relationship.Pair(id: index, x: xValue, y: yValue))
             }
         }
         return Relationship(

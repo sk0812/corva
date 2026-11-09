@@ -107,7 +107,8 @@ nonisolated enum BioAge {
             }
         }
 
-        let vo2Max = Statistics.mean(window.map(\.vitals.vo2Max))
+        let vo2Readings = window.compactMap(\.vitals.vo2Max)
+        let vo2Max = Statistics.mean(vo2Readings)
         let restingHeartRate = Statistics.mean(window.map(\.vitals.restingHeartRate))
         let hrv = Statistics.mean(window.map(\.vitals.hrv))
         let steps = Statistics.mean(window.map { Double($0.strain.steps) })
@@ -137,7 +138,8 @@ nonisolated enum BioAge {
         return Estimate(
             date: last.date,
             chronologicalAge: age,
-            markers: raw.map { kind, value, reference, years in
+            // No VO2 max estimate yet (it needs outdoor workouts): leave it out rather than guess.
+            markers: raw.filter { $0.0 != .vo2Max || !vo2Readings.isEmpty }.map { kind, value, reference, years in
                 Marker(kind: kind, value: value, reference: reference, years: clamp(years, kind.limit))
             }
         )

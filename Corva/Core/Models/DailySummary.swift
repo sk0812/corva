@@ -53,18 +53,22 @@ nonisolated enum RecoveryZone: String, CaseIterable, Sendable {
 }
 
 /// Overnight physiology, measured during the sleep that ended on the summary's morning.
+///
+/// HRV and resting heart rate are required: without them there's no recovery score, so a day
+/// missing them isn't summarised at all. The others are nil on nights the wearable didn't
+/// report them (not every device measures every one).
 nonisolated struct Vitals: Hashable, Sendable {
     /// Heart rate variability (RMSSD), milliseconds.
     let hrv: Double
     /// Beats per minute.
     let restingHeartRate: Double
     /// Breaths per minute.
-    let respiratoryRate: Double
+    let respiratoryRate: Double?
     /// Average overnight blood oxygen saturation (SpO₂), percent.
-    let bloodOxygen: Double
+    let bloodOxygen: Double?
     /// Absolute nightly skin temperature, degrees Celsius. Converted for display only.
-    let skinTemperature: Double
+    let skinTemperature: Double?
     /// Estimated VO2 max (cardio fitness), ml/kg/min. Sources update it after qualifying
     /// outdoor workouts, so it moves slowly; the latest estimate is carried on every day.
-    let vo2Max: Double
+    let vo2Max: Double?
 }

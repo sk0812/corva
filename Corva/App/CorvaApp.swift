@@ -7,13 +7,10 @@ struct CorvaApp: App {
     @State private var pacts: PactStore
     @State private var account: AccountService
 
-    /// The single place the app chooses where data comes from. Swap in a Google Health or
-    /// Apple Health provider here; nothing downstream needs to change.
-    private let provider: any HealthDataProvider
-
     init() {
+        // Demo data until an account with Google Health connected takes over (AccountService
+        // picks the provider; nothing downstream knows which it is).
         let mock = MockHealthDataProvider()
-        provider = mock
         let settings = AppSettings()
         // Demo data, seeded from the same simulated behaviour the mock days reflect. Signing
         // in swaps in the account's own experiments and pacts.
@@ -26,18 +23,22 @@ struct CorvaApp: App {
             client: SupabaseClient(),
             settings: settings,
             experiments: experiments,
-            pacts: pacts
+            pacts: pacts,
+            demoProvider: mock
         ))
     }
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
+                // Rebuilt when the data underneath changes (demo ⇄ real, or a sync lands).
+                .id(account.dataVersion)
                 .environment(settings)
                 .environment(experiments)
                 .environment(pacts)
                 .environment(account)
-                .environment(\.healthDataProvider, provider)
+                .environment(\.healthDataProvider, account.healthDataProvider)
+                .environment(\.isShowingDemoData, !account.usesRealData)
                 // Follows the system unless Settings › Appearance picks light or dark.
                 .preferredColorScheme(settings.appearance.colorScheme)
                 .tint(CorvaColor.accent)

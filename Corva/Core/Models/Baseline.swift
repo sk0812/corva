@@ -39,7 +39,8 @@ nonisolated struct Baseline: Hashable, Sendable {
             return
         }
         for metric in Metric.allCases {
-            let values = history.map(metric.value(in:))
+            let values = history.compactMap(metric.value(in:))
+            guard !values.isEmpty else { continue }
             stats[metric] = Stat(
                 mean: Statistics.mean(values),
                 standardDeviation: Statistics.standardDeviation(values)
@@ -52,7 +53,7 @@ nonisolated struct Baseline: Hashable, Sendable {
 
     /// How far a day's value sits from this baseline, in the metric's own unit.
     func delta(for metric: Metric, in summary: DailySummary) -> Double? {
-        guard let stat = stats[metric] else { return nil }
-        return metric.value(in: summary) - stat.mean
+        guard let stat = stats[metric], let value = metric.value(in: summary) else { return nil }
+        return value - stat.mean
     }
 }

@@ -138,6 +138,10 @@ nonisolated struct Pact: Identifiable, Hashable, Sendable {
     /// A head-to-head friend's daily values, keyed by pact day. Simulated in demo pacts;
     /// empty for real pacts until the server settles days.
     var friendValues: [Date: Double]
+    /// Your own daily values from the server, keyed by pact day. When present they're used
+    /// instead of local summaries, so a day counts even if you didn't wear the tracker that
+    /// night.
+    var ownValues: [Date: Double]?
     /// How the pact stands on the server. Nil for demo pacts.
     var sync: Sync?
 

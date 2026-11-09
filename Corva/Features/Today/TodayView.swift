@@ -71,9 +71,13 @@ struct TodayView: View {
 
 private struct TodayContent: View {
     let content: TodayViewModel.Content
+    @Environment(\.isShowingDemoData) private var isShowingDemoData
 
     var body: some View {
         VStack(spacing: Spacing.m) {
+            if isShowingDemoData {
+                DemoDataNotice()
+            }
             ScoreDials(content: content)
                 .padding(.bottom, Spacing.s)
             StrainTargetCard(content: content)
@@ -85,6 +89,24 @@ private struct TodayContent: View {
         .padding(.horizontal, Spacing.screen)
         .padding(.top, Spacing.s)
         .padding(.bottom, Spacing.xxl)
+    }
+}
+
+// MARK: - Demo notice
+
+/// Says plainly that these aren't the user's numbers yet.
+private struct DemoDataNotice: View {
+    var body: some View {
+        HStack(spacing: Spacing.xs) {
+            Image(systemName: "sparkles")
+            Text("Demo data. Connect Google Health in Settings to see yours.")
+                .lineLimit(2)
+        }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(CorvaColor.textSecondary)
+        .padding(.horizontal, Spacing.m)
+        .padding(.vertical, Spacing.xs)
+        .glassEffect(.regular, in: .capsule)
     }
 }
 
@@ -187,14 +209,14 @@ private struct HealthMonitorCard: View {
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 CardHeader(
                     title: "Health monitor",
-                    tint: content.vitalsInRange == Metric.vitals.count ? nil : CorvaColor.alert,
-                    detail: "\(content.vitalsInRange) of \(Metric.vitals.count) in typical range"
+                    tint: content.vitalsInRange == content.availableVitals.count ? nil : CorvaColor.alert,
+                    detail: "\(content.vitalsInRange) of \(content.availableVitals.count) in typical range"
                 )
                 VStack(spacing: 0) {
-                    ForEach(Array(Metric.vitals.enumerated()), id: \.element) { index, metric in
+                    ForEach(Array(content.availableVitals.enumerated()), id: \.element) { index, metric in
                         if index > 0 { CardDivider() }
                         NavigationLink(value: TodayDestination.metric(metric, content.day.date)) {
-                            VitalRow(metric: metric, day: content.day)
+                            VitalRow(metric: metric, value: metric.value(in: content.day) ?? 0, day: content.day)
                         }
                         .buttonStyle(.plain)
                     }
@@ -206,6 +228,7 @@ private struct HealthMonitorCard: View {
 
 private struct VitalRow: View {
     let metric: Metric
+    let value: Double
     let day: DailySummary
     @Environment(\.metricFormatter) private var format
 
@@ -225,12 +248,12 @@ private struct VitalRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let range = day.baseline[metric]?.typicalRange {
-                RangeBar(value: metric.value(in: day), typicalRange: range)
+                RangeBar(value: value, typicalRange: range)
                     .frame(width: 76)
             }
             VStack(alignment: .trailing, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(format.value(metric.value(in: day), for: metric))
+                    Text(format.value(value, for: metric))
                         .font(.system(.body, design: .rounded, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(CorvaColor.textPrimary)

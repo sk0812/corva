@@ -126,8 +126,10 @@ private struct ExperimentContent: View {
             VStack(alignment: .leading, spacing: Spacing.m) {
                 CardHeader(title: metric.title, detail: "Each dot is a morning")
                 ExperimentChart(
-                    points: shown.map { day in
-                        ExperimentChart.Point(date: day.date, value: format.convert(metric.value(in: day), for: metric), isTrial: trial.contains(day.date))
+                    points: shown.compactMap { day in
+                        metric.value(in: day).map {
+                            ExperimentChart.Point(date: day.date, value: format.convert($0, for: metric), isTrial: trial.contains(day.date))
+                        }
                     },
                     formatValue: { $0.formatted(.number.precision(.fractionLength(format.fractionDigits(for: metric)))) }
                 )

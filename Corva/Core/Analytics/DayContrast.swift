@@ -131,7 +131,7 @@ nonisolated enum DayContrast {
         let candidates = Array(days.indices.dropFirst())
         guard candidates.count >= 12 else { return nil }
 
-        let score = { (index: Int) in ranking.metric.value(in: days[index]) }
+        let score = { (index: Int) in ranking.metric.value(in: days[index]) ?? 0 }
         let sorted = candidates.sorted { score($0) > score($1) }
         let size = max(3, Int((Double(candidates.count) * groupShare).rounded()))
         let best = Array(sorted.prefix(size))

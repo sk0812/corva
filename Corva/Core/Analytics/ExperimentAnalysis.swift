@@ -110,8 +110,8 @@ nonisolated enum ExperimentAnalysis {
         let outcomes = experiment.outcomes.map { metric in
             outcome(
                 metric: metric,
-                control: control.map(metric.value(in:)),
-                trial: trial.map(metric.value(in:)),
+                control: control.compactMap(metric.value(in:)),
+                trial: trial.compactMap(metric.value(in:)),
                 projected: projected
             )
         }

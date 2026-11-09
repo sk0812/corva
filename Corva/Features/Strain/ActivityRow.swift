@@ -37,8 +37,12 @@ struct ActivityRow: View {
                     height: 6
                 )
                 HStack(spacing: Spacing.m) {
-                    detailStat("Avg", "\(activity.averageHeartRate) bpm")
-                    detailStat("Max", "\(activity.maxHeartRate) bpm")
+                    if activity.averageHeartRate > 0 {
+                        detailStat("Avg", "\(activity.averageHeartRate) bpm")
+                    }
+                    if activity.maxHeartRate > 0 {
+                        detailStat("Max", "\(activity.maxHeartRate) bpm")
+                    }
                     detailStat("Energy", format.energy(activity.energy))
                 }
             }
@@ -77,6 +81,7 @@ extension ActivityKind {
         case .walk: "figure.walk"
         case .swim: "figure.pool.swim"
         case .yoga: "figure.yoga"
+        case .other: "figure.mixed.cardio"
         }
     }
 }

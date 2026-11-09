@@ -1,22 +1,22 @@
 # Corva: plan for linking a backend
 
 **Status (9 Nov 2026):**
-- **Supabase project `corva` is live (London).** The schema is in `supabase/migrations`, with
-  row-level security on every table.
-- **The app signs in** with Google, or by email with a one-time code. The session is kept in the
-  Keychain.
-- **Sync:**
-  - **Profile and settings:** both ways.
-  - **Experiments and tags:** pulled at sign-in and launch; local changes pushed as they happen.
-  - **Pacts:** pulled the same way; new pacts are created on the server. Head-to-head pacts get
-    an invite code, and a friend joins with Pacts › + › Join with a code.
-- **The client** is a small hand-written one (`Core/Backend/SupabaseClient.swift`), using only
-  Apple frameworks.
-- **Not yet built:**
-  - the settlement worker (so a friend's days stay empty);
-  - Apple Health;
-  - Google Health (Google isn't onboarding new projects);
-  - payments.
+- **Supabase project `corva`** (London) has a schema with row-level security on every table,
+  in `supabase/migrations`.
+- **Sign-in:** Google, or email with a one-time code. The session is kept in the Keychain.
+- **Sync:** profile, experiments, tags and pacts; head-to-head pacts join by invite code.
+- **Google Health:** the `google-health` Edge Function holds the OAuth tokens and normalises
+  Google's data into `daily_records`, one row per day. It syncs hourly (pg_cron), when the app
+  opens, and on demand.
+  - **Pulled per day:** steps, active energy, heart-rate zones, average and max heart rate,
+    resting heart rate, HRV, SpO₂, breathing rate, nightly skin temperature, VO2 max, the main
+    sleep with stages, and workouts.
+- **Real data in the app:** a signed-in user with Google Health connected sees their own
+  numbers everywhere (`RemoteHealthDataProvider`), scored with the same Swift code as the demo.
+- **Pact settlement:** `settle_pacts()` runs hourly in Postgres. It scores days from
+  `daily_records`, excuses unwell days, finishes pacts and writes `ledger_entries`.
+  `pact_progress()` shares only the goal metric with a pact partner.
+- **Not yet built:** Apple Health, payments, push notifications.
 
 A draft for discussion. It covers what the backend is for, a recommended shape, how the
 existing app code plugs in, the data model, and a phased order of work. Decisions that are

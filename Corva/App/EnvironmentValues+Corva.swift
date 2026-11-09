@@ -9,4 +9,7 @@ extension EnvironmentValues {
 
     /// Formats values in the user's preferred units. Derived from `AppSettings` at the root.
     @Entry var metricFormatter = MetricFormatter()
+
+    /// True while screens show generated demo data rather than the user's own.
+    @Entry var isShowingDemoData = true
 }

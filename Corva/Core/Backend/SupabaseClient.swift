@@ -178,10 +178,27 @@ final class SupabaseClient {
 
     /// Rows from a table or view. `query` holds PostgREST parameters such as
     /// `select=…` and filters like `id=eq.…`.
-    func select<Row: Decodable>(_ table: String, query: [URLQueryItem] = [], as type: Row.Type = Row.self) async throws -> [Row] {
+    func select<Row: Decodable>(
+        _ table: String,
+        query: [URLQueryItem] = [],
+        as type: Row.Type = Row.self,
+        convertingSnakeCase: Bool = false
+    ) async throws -> [Row] {
         let data = try await send("GET", path: "rest/v1/\(table)", query: query, body: nil)
+        let decoder = JSONDecoder()
+        if convertingSnakeCase { decoder.keyDecodingStrategy = .convertFromSnakeCase }
         do {
-            return try JSONDecoder().decode([Row].self, from: data)
+            return try decoder.decode([Row].self, from: data)
+        } catch {
+            throw BackendError.invalidResponse
+        }
+    }
+
+    /// Calls an Edge Function as the signed-in user.
+    func function<Body: Encodable, Result: Decodable>(_ path: String, _ body: Body, returning type: Result.Type) async throws -> Result {
+        let data = try await send("POST", path: "functions/v1/\(path)", body: try JSONEncoder().encode(body))
+        do {
+            return try JSONDecoder().decode(Result.self, from: data)
         } catch {
             throw BackendError.invalidResponse
         }
@@ -266,7 +283,7 @@ final class SupabaseClient {
     /// Auth and PostgREST name their error fields differently; take whichever is there.
     private static func errorMessage(from data: Data, status: Int) -> String {
         let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        for key in ["msg", "error_description", "message", "error"] {
+        for key in ["error", "msg", "error_description", "message"] {
             if let message = object?[key] as? String, !message.isEmpty { return message }
         }
         return "The server returned an error (\(status))."

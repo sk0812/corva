@@ -12,6 +12,7 @@ enum AppTab: Hashable {
 struct RootTabView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(AccountService.self) private var account
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppTab = .today
 
     var body: some View {
@@ -35,6 +36,9 @@ struct RootTabView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: selection)
         .task { await account.start() }
         .onChange(of: settings.syncedValues) { account.settingsChanged() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await account.syncIfStale() } }
+        }
         // Derived here, inside a view, so unit changes in Settings re-render every screen.
         .environment(\.metricFormatter, settings.formatter)
     }

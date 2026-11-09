@@ -65,7 +65,7 @@ nonisolated enum PactEvaluation {
         let days = pact.days(calendar: calendar).map { date in
             let settlingDate = calendar.date(byAdding: .day, value: pact.goal.summaryOffset, to: date) ?? date
             let summary = byDate[settlingDate]
-            let value = summary.map { pact.goal.value(in: $0, calendar: calendar) }
+            let value = pact.ownValues.map { $0[date] } ?? summary.map { pact.goal.value(in: $0, calendar: calendar) }
             let isUnwell = pact.sickDayPass && (summary?.isLikelyUnwell ?? false)
             return day(date: date, value: value, isUnwell: isUnwell, pact: pact, today: today, calendar: calendar)
         }
@@ -145,8 +145,7 @@ extension DailySummary {
     /// blood oxygen down; resting heart rate, breathing rate and skin temperature up.
     nonisolated var unwellSignals: [Metric] {
         Metric.vitals.filter { metric in
-            guard let range = baseline[metric]?.typicalRange else { return false }
-            let value = metric.value(in: self)
+            guard let range = baseline[metric]?.typicalRange, let value = metric.value(in: self) else { return false }
             switch metric {
             case .hrv, .bloodOxygen: return value < range.lowerBound
             case .restingHeartRate, .respiratoryRate, .skinTemperature: return value > range.upperBound

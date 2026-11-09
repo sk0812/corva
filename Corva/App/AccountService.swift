@@ -18,8 +18,25 @@ final class AccountService {
     private(set) var isWorking = false
     private(set) var lastSynced: Date?
     private(set) var lastError: String?
+    /// The Google Health connection as the server reports it. Nil until checked.
+    private(set) var googleHealth: GoogleHealthStatus?
+    /// Bumped when real data changes underneath the screens (connect, sync, disconnect), so
+    /// they reload.
+    private(set) var dataVersion = 0
 
     var isSignedIn: Bool { user != nil }
+
+    /// Real data needs an account with Google Health connected; otherwise screens show demo data.
+    var usesRealData: Bool { isSignedIn && googleHealth?.connected == true }
+
+    /// Where every screen's health data comes from right now.
+    var healthDataProvider: any HealthDataProvider {
+        guard usesRealData else { return demoProvider }
+        let status = googleHealth
+        return RemoteHealthDataProvider(cache: recordCache) { source in
+            source == .googleHealth ? .connected(lastSync: status?.lastSynced ?? .now) : .notConnected
+        }
+    }
 
     @ObservationIgnored private let client: SupabaseClient
     @ObservationIgnored private let settings: AppSettings
@@ -29,9 +46,27 @@ final class AccountService {
     @ObservationIgnored private let demoPacts: [Pact]
     @ObservationIgnored private var queue: Task<Void, Never>?
     @ObservationIgnored private var profilePush: Task<Void, Never>?
+    @ObservationIgnored private let demoProvider: any HealthDataProvider
+    @ObservationIgnored private let recordCache: DailyRecordCache
 
-    init(client: SupabaseClient, settings: AppSettings, experiments: ExperimentStore, pacts: PactStore) {
+    init(
+        client: SupabaseClient,
+        settings: AppSettings,
+        experiments: ExperimentStore,
+        pacts: PactStore,
+        demoProvider: any HealthDataProvider
+    ) {
         self.client = client
+        self.demoProvider = demoProvider
+        let fetchRecords: @MainActor @Sendable (String) async throws -> [DailyRecordRow] = { [client] from in
+            try await client.select("daily_records", query: [
+                URLQueryItem(name: "select", value: "*"),
+                URLQueryItem(name: "source", value: "eq.google_health"),
+                URLQueryItem(name: "date", value: "gte.\(from)"),
+                URLQueryItem(name: "order", value: "date.asc"),
+            ], as: DailyRecordRow.self, convertingSnakeCase: true)
+        }
+        recordCache = DailyRecordCache(fetch: fetchRecords)
         self.settings = settings
         self.experiments = experiments
         self.pacts = pacts
@@ -89,8 +124,10 @@ final class AccountService {
         user = nil
         lastSynced = nil
         lastError = nil
+        googleHealth = nil
         experiments.replace(with: demoExperiments)
         pacts.replace(with: demoPacts)
+        await dataChanged()
     }
 
     @discardableResult
@@ -119,6 +156,7 @@ final class AccountService {
         defer { isWorking = false }
         await queue?.value
         do {
+            try await loadGoogleHealthStatus()
             try await pullProfile(pushLocalIfNew: isFirstSignIn)
             let rows = try await client.select("experiments", query: [
                 URLQueryItem(name: "select", value: ExperimentRow.select),
@@ -162,9 +200,100 @@ final class AccountService {
         let participants = try await client.select("pact_participants", query: [URLQueryItem(name: "select", value: "pact_id")], as: PactParticipantRow.self)
         let codes = Dictionary(invites.map { ($0.pactID, $0.code) }, uniquingKeysWith: { first, _ in first })
         let counts = Dictionary(grouping: participants, by: \.pactID).mapValues(\.count)
-        pacts.replace(with: rows.compactMap { row in
+        var loaded = rows.compactMap { row in
             row.pact(for: me, inviteCode: codes[row.id], participantCount: counts[row.id] ?? 1)
-        })
+        }
+        // Everyone's values for each running or finished pact, scored from server data.
+        for index in loaded.indices where loaded[index].sync?.status != .pending {
+            let progress = try await client.rpc(
+                "pact_progress",
+                PactArgument(targetPact: loaded[index].id),
+                returning: [PactProgressRow].self
+            )
+            var own: [Date: Double] = [:]
+            var friend: [Date: Double] = [:]
+            for row in progress {
+                guard let day = DayCoding.date(from: row.day), let value = row.value else { continue }
+                if row.userID == me { own[day] = value } else { friend[day] = value }
+            }
+            loaded[index].ownValues = own
+            loaded[index].friendValues = friend
+        }
+        pacts.replace(with: loaded)
+    }
+
+    // MARK: - Google Health
+
+    /// Connects Google Health: the server makes the consent link, `authenticate` shows it,
+    /// and the server stores the tokens and starts pulling history.
+    func connectGoogleHealth(authenticate: (URL) async throws -> URL) async {
+        isWorking = true
+        lastError = nil
+        defer { isWorking = false }
+        do {
+            let response = try await client.function("google-health/connect", EmptyRequest(), returning: ConnectResponse.self)
+            let callback = try await authenticate(response.url)
+            let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard items.first(where: { $0.name == "status" })?.value == "connected" else {
+                lastError = items.first(where: { $0.name == "message" })?.value ?? "Google Health didn’t connect. Try again."
+                return
+            }
+            try await loadGoogleHealthStatus()
+            // The first pull of history runs on the server; wait for it (up to a minute and a half).
+            for _ in 0..<30 where googleHealth?.lastSynced == nil && googleHealth?.lastError == nil {
+                try await Task.sleep(for: .seconds(3))
+                try await loadGoogleHealthStatus()
+            }
+            await dataChanged()
+            await refresh()
+        } catch {
+            record(error)
+        }
+    }
+
+    /// Pulls the last `days` days from Google now.
+    func syncGoogleHealth(days: Int = 7) async {
+        guard usesRealData else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await client.function("google-health/sync", SyncRequest(days: days), returning: SyncResponse.self)
+            try await loadGoogleHealthStatus()
+            await dataChanged()
+        } catch {
+            record(error)
+            try? await loadGoogleHealthStatus()
+        }
+    }
+
+    /// When the app comes to the foreground: sync if the last one was over 30 minutes ago.
+    func syncIfStale() async {
+        guard usesRealData, !isWorking else { return }
+        if let last = googleHealth?.lastSynced, Date.now.timeIntervalSince(last) < 30 * 60 { return }
+        await syncGoogleHealth(days: 3)
+    }
+
+    /// Revokes Google's access and deletes the synced data from the server.
+    func disconnectGoogleHealth() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await client.function("google-health/disconnect", EmptyRequest(), returning: DisconnectResponse.self)
+            googleHealth = GoogleHealthStatus(connected: false)
+            await dataChanged()
+        } catch {
+            record(error)
+        }
+    }
+
+    private func loadGoogleHealthStatus() async throws {
+        let rows = try await client.rpc("google_health_status", EmptyRequest(), returning: [GoogleHealthStatusRow].self)
+        googleHealth = rows.first.map(GoogleHealthStatus.init) ?? GoogleHealthStatus(connected: false)
+    }
+
+    private func dataChanged() async {
+        await recordCache.invalidate()
+        dataVersion += 1
     }
 
     // MARK: - Settings
@@ -305,6 +434,88 @@ extension AccountService: PactSyncing {
     }
 }
 
+// MARK: - Google Health status and requests
+
+nonisolated struct GoogleHealthStatus: Hashable, Sendable {
+    var connected: Bool
+    var connectedAt: Date?
+    var lastSynced: Date?
+    var lastError: String?
+    /// While the Google project is in Testing, access lapses after 7 days.
+    var expiresAt: Date?
+
+    init(connected: Bool, connectedAt: Date? = nil, lastSynced: Date? = nil, lastError: String? = nil, expiresAt: Date? = nil) {
+        self.connected = connected
+        self.connectedAt = connectedAt
+        self.lastSynced = lastSynced
+        self.lastError = lastError
+        self.expiresAt = expiresAt
+    }
+
+    init(_ row: GoogleHealthStatusRow) {
+        self.init(
+            connected: row.connected ?? false,
+            connectedAt: row.connectedAt.flatMap(ISODate.parse),
+            lastSynced: row.lastSyncedAt.flatMap(ISODate.parse),
+            lastError: row.lastError,
+            expiresAt: row.refreshTokenExpiresAt.flatMap(ISODate.parse)
+        )
+    }
+}
+
+nonisolated struct GoogleHealthStatusRow: Decodable, Sendable {
+    let connected: Bool?
+    let connectedAt: String?
+    let lastSyncedAt: String?
+    let lastError: String?
+    let refreshTokenExpiresAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case connected
+        case connectedAt = "connected_at"
+        case lastSyncedAt = "last_synced_at"
+        case lastError = "last_error"
+        case refreshTokenExpiresAt = "refresh_token_expires_at"
+    }
+}
+
+private nonisolated struct EmptyRequest: Encodable, Sendable {}
+
+private nonisolated struct ConnectResponse: Decodable, Sendable {
+    let url: URL
+}
+
+private nonisolated struct SyncRequest: Encodable, Sendable {
+    let days: Int
+}
+
+private nonisolated struct SyncResponse: Decodable, Sendable {
+    let days: Int
+}
+
+private nonisolated struct DisconnectResponse: Decodable, Sendable {
+    let disconnected: Bool
+}
+
+private nonisolated struct PactArgument: Encodable, Sendable {
+    let targetPact: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case targetPact = "target_pact"
+    }
+}
+
+private nonisolated struct PactProgressRow: Decodable, Sendable {
+    let userID: UUID
+    let day: String
+    let value: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case day, value
+    }
+}
+
 // MARK: - Previews
 
 extension AccountService {
@@ -313,6 +524,7 @@ extension AccountService {
         client: SupabaseClient(restoringSession: false),
         settings: AppSettings(),
         experiments: ExperimentStore(),
-        pacts: PactStore()
+        pacts: PactStore(),
+        demoProvider: MockHealthDataProvider.preview
     )
 }

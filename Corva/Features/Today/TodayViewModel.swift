@@ -20,11 +20,17 @@ final class TodayViewModel {
         }
 
         func isInTypicalRange(_ metric: Metric) -> Bool {
-            day.baseline[metric]?.contains(metric.value(in: day)) ?? true
+            guard let value = metric.value(in: day) else { return true }
+            return day.baseline[metric]?.contains(value) ?? true
+        }
+
+        /// The vitals this night has readings for.
+        var availableVitals: [Metric] {
+            Metric.vitals.filter { $0.value(in: day) != nil }
         }
 
         var vitalsInRange: Int {
-            Metric.vitals.filter(isInTypicalRange).count
+            availableVitals.filter(isInTypicalRange).count
         }
 
         /// Sleep missed against need over the last seven nights.
@@ -33,7 +39,7 @@ final class TodayViewModel {
         }
 
         func weekAverage(_ metric: Metric) -> Double {
-            Statistics.mean(week.map(metric.value(in:)))
+            Statistics.mean(week.compactMap(metric.value(in:)))
         }
     }
 

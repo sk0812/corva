@@ -10,7 +10,8 @@ final class MetricDetailViewModel {
         /// The 30 days ending on `day`, oldest first.
         let history: [DailySummary]
 
-        var value: Double { metric.value(in: day) }
+        /// Present: `load` only produces content for days with a reading.
+        var value: Double { metric.value(in: day) ?? 0 }
         var baseline: Baseline.Stat? { day.baseline[metric] }
         var delta: Double? { day.baseline.delta(for: metric, in: day) }
         var points: [DatedValue] { metric.series(in: history) }
@@ -22,8 +23,8 @@ final class MetricDetailViewModel {
         /// Days in `history` whose value fell outside that day's own typical range.
         var daysOutsideRange: Int {
             history.filter { day in
-                guard let stat = day.baseline[metric] else { return false }
-                return !stat.contains(metric.value(in: day))
+                guard let stat = day.baseline[metric], let value = metric.value(in: day) else { return false }
+                return !stat.contains(value)
             }.count
         }
 
@@ -47,7 +48,7 @@ final class MetricDetailViewModel {
     func load(using provider: any HealthDataProvider) async {
         do {
             let history = try await provider.summaries(endingOn: date, count: Baseline.windowDays, calendar: calendar)
-            guard let day = history.last, calendar.isDate(day.date, inSameDayAs: date) else {
+            guard let day = history.last, calendar.isDate(day.date, inSameDayAs: date), metric.value(in: day) != nil else {
                 state = .empty
                 return
             }
