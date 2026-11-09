@@ -16,18 +16,20 @@ struct RootTabView: View {
     @State private var selection: AppTab = .today
 
     var body: some View {
+        // Data tabs are rebuilt when the data underneath changes (demo ⇄ real, or a sync
+        // lands), so they reload. Settings isn't, so a sync started there stays put.
         TabView(selection: $selection) {
             Tab("Today", systemImage: "waveform.path.ecg", value: AppTab.today) {
-                TodayView()
+                TodayView().id(account.dataVersion)
             }
             Tab("Trends", systemImage: "chart.line.uptrend.xyaxis", value: AppTab.trends) {
-                TrendsView()
+                TrendsView().id(account.dataVersion)
             }
             Tab("Lab", systemImage: "flask", value: AppTab.lab) {
-                LabView()
+                LabView().id(account.dataVersion)
             }
             Tab("Pacts", systemImage: "target", value: AppTab.pacts) {
-                PactsView()
+                PactsView().id(account.dataVersion)
             }
             Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()

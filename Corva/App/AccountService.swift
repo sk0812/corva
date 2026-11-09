@@ -80,8 +80,17 @@ final class AccountService {
         if user != nil {
             experiments.replace(with: [])
             pacts.replace(with: [])
+            // Start on real data if Google Health was connected last time, so launch doesn't
+            // flash demo numbers. The status check that follows confirms or corrects it.
+            if UserDefaults.standard.bool(forKey: Self.connectedKey) {
+                googleHealth = GoogleHealthStatus(connected: true)
+            }
         }
     }
+
+    /// Whether Google Health was connected when the app last checked. Not sensitive: a flag
+    /// that only decides which data screens load first.
+    private static let connectedKey = "corva.googleHealthConnected"
 
     /// At launch: pull everything if a session was restored.
     func start() async {
@@ -127,6 +136,7 @@ final class AccountService {
         lastSynced = nil
         lastError = nil
         googleHealth = nil
+        UserDefaults.standard.removeObject(forKey: Self.connectedKey)
         experiments.replace(with: demoExperiments)
         pacts.replace(with: demoPacts)
         await dataChanged()
@@ -273,7 +283,8 @@ final class AccountService {
 
     /// When the app comes to the foreground: sync if the last one was over 30 minutes ago.
     func syncIfStale() async {
-        guard usesRealData, !isWorking else { return }
+        // Wait for the real status (the launch guess has no dates), then sync if it's stale.
+        guard usesRealData, !isWorking, googleHealth?.connectedAt != nil else { return }
         if let last = googleHealth?.lastSynced, Date.now.timeIntervalSince(last) < 30 * 60 { return }
         await syncGoogleHealth(days: 3)
     }
@@ -284,8 +295,7 @@ final class AccountService {
         defer { isWorking = false }
         do {
             _ = try await client.function("google-health/disconnect", EmptyRequest(), returning: DisconnectResponse.self)
-            googleHealth = GoogleHealthStatus(connected: false)
-            await dataChanged()
+            await setGoogleHealth(GoogleHealthStatus(connected: false))
         } catch {
             record(error)
         }
@@ -293,7 +303,18 @@ final class AccountService {
 
     private func loadGoogleHealthStatus() async throws {
         let rows = try await client.rpc("google_health_status", EmptyRequest(), returning: [GoogleHealthStatusRow].self)
-        googleHealth = rows.first.map(GoogleHealthStatus.init) ?? GoogleHealthStatus(connected: false)
+        await setGoogleHealth(rows.first.map(GoogleHealthStatus.init) ?? GoogleHealthStatus(connected: false))
+    }
+
+    /// Records the connection status, and reloads the screens if that switches them between
+    /// demo and real data.
+    private func setGoogleHealth(_ status: GoogleHealthStatus) async {
+        let wasReal = usesRealData
+        googleHealth = status
+        UserDefaults.standard.set(status.connected, forKey: Self.connectedKey)
+        if usesRealData != wasReal {
+            await dataChanged()
+        }
     }
 
     private func dataChanged() async {
@@ -379,8 +400,10 @@ final class AccountService {
         if let backendError = error as? BackendError, backendError == .notSignedIn, user != nil {
             // The session expired or was revoked elsewhere.
             user = nil
+            UserDefaults.standard.removeObject(forKey: Self.connectedKey)
             experiments.replace(with: demoExperiments)
             pacts.replace(with: demoPacts)
+            Task { await dataChanged() }
             lastError = "You were signed out. Sign in again to sync."
             return
         }

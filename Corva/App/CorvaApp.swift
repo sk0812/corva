@@ -31,8 +31,6 @@ struct CorvaApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView()
-                // Rebuilt when the data underneath changes (demo ⇄ real, or a sync lands).
-                .id(account.dataVersion)
                 .environment(settings)
                 .environment(experiments)
                 .environment(pacts)
