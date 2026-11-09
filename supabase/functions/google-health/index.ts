@@ -6,6 +6,7 @@
 //                     browser back to corva://google-health?status=…
 //   POST /sync        signed-in user → sync their last `days` days (default 7)
 //   POST /sync-all    hourly cron (x-corva-cron header) → sync everyone's last 3 days
+//                     (or `days`, up to 120, for a backfill)
 //   POST /disconnect  signed-in user → revoke at Google, delete tokens and synced data
 //
 // Tokens never leave the server. Each sync normalises Google's data into one
@@ -57,11 +58,13 @@ Deno.serve(async (request) => {
         const days = Math.min(Math.max(Number(body.days ?? 7), 1), 120);
         return json(await syncUser(user, days));
       }
-      case "sync-all":
+      case "sync-all": {
         if (!CRON_SECRET || request.headers.get("x-corva-cron") !== CRON_SECRET) {
           return json({ error: "Not allowed" }, 401);
         }
-        return json(await syncAll());
+        const body = await request.json().catch(() => ({}));
+        return json(await syncAll(Math.min(Math.max(Number(body.days ?? 3), 1), 120)));
+      }
       case "disconnect":
         return json(await disconnect(await requireUser(request)));
       default:
@@ -262,12 +265,12 @@ async function accessToken(userId: string): Promise<string> {
 // ---------------------------------------------------------------------------------------
 // Syncing
 
-async function syncAll() {
+async function syncAll(days: number) {
   const connections = await db("google_connections?select=user_id");
   const results: Record<string, unknown> = {};
   for (const { user_id } of connections ?? []) {
     try {
-      results[user_id] = await syncUser(user_id, 3);
+      results[user_id] = await syncUser(user_id, days);
     } catch (error) {
       results[user_id] = { error: error instanceof Error ? error.message : String(error) };
     }
@@ -296,113 +299,143 @@ async function syncUser(userId: string, days: number) {
     return records.get(date)!;
   };
 
+  // Each data type is pulled on its own. If one fails, its columns are left out of the
+  // upsert (keeping whatever was stored before) and the rest still save. A permission
+  // problem stops everything, since nothing else would work either.
+  const failures: string[] = [];
+  const failedColumns = new Set<string>();
+  const step = async (label: string, columns: string[], pull: () => Promise<void>) => {
+    try {
+      await pull();
+    } catch (error) {
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) throw error;
+      console.error(label, error);
+      failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      for (const column of columns) failedColumns.add(column);
+    }
+  };
+
   try {
     // Daily totals.
-    for (const point of await rollUp(token, "steps", start, end, 90)) {
-      day(civilDate(point.civilStartTime)).steps = Number(point.steps?.countSum ?? 0);
-    }
-    for (const point of await rollUp(token, "active-energy-burned", start, end, 90)) {
-      day(civilDate(point.civilStartTime)).active_kcal = point.activeEnergyBurned?.kcalSum ?? null;
-    }
-    for (const point of await rollUp(token, "time-in-heart-rate-zone", start, end, 90)) {
-      const zones: Record<string, number> = {};
-      for (const entry of point.timeInHeartRateZone?.timeInHeartRateZones ?? []) {
-        zones[entry.heartRateZone] = (zones[entry.heartRateZone] ?? 0) + seconds(entry.duration);
+    await step("steps", ["steps"], async () => {
+      for (const point of await rollUp(token, "steps", start, end, 90)) {
+        day(civilDate(point.civilStartTime)).steps = Number(point.steps?.countSum ?? 0);
       }
-      day(civilDate(point.civilStartTime)).zone_seconds = zones;
-    }
-    for (const point of await rollUp(token, "heart-rate", start, end, 14)) {
-      const record = day(civilDate(point.civilStartTime));
-      record.hr_avg = point.heartRate?.beatsPerMinuteAvg ?? null;
-      record.hr_max = point.heartRate?.beatsPerMinuteMax ?? null;
-      record.hr_min = point.heartRate?.beatsPerMinuteMin ?? null;
-    }
+    });
+    await step("active energy", ["active_kcal"], async () => {
+      for (const point of await rollUp(token, "active-energy-burned", start, end, 90)) {
+        day(civilDate(point.civilStartTime)).active_kcal = point.activeEnergyBurned?.kcalSum ?? null;
+      }
+    });
+    await step("heart-rate zones", ["zone_seconds"], async () => {
+      for (const point of await rollUp(token, "time-in-heart-rate-zone", start, end, 90)) {
+        const zones: Record<string, number> = {};
+        for (const entry of point.timeInHeartRateZone?.timeInHeartRateZones ?? []) {
+          zones[entry.heartRateZone] = (zones[entry.heartRateZone] ?? 0) + seconds(entry.duration);
+        }
+        day(civilDate(point.civilStartTime)).zone_seconds = zones;
+      }
+    });
+    await step("heart rate", ["hr_avg", "hr_max", "hr_min"], async () => {
+      for (const point of await rollUp(token, "heart-rate", start, end, 14)) {
+        const record = day(civilDate(point.civilStartTime));
+        record.hr_avg = point.heartRate?.beatsPerMinuteAvg ?? null;
+        record.hr_max = point.heartRate?.beatsPerMinuteMax ?? null;
+        record.hr_min = point.heartRate?.beatsPerMinuteMin ?? null;
+      }
+    });
 
-    // Overnight vitals, one point per day.
-    const daily: Array<[string, string, (value: any) => Record<string, unknown>]> = [
-      ["daily-resting-heart-rate", "dailyRestingHeartRate", (v) => ({ resting_hr: Number(v.beatsPerMinute) })],
-      ["daily-heart-rate-variability", "dailyHeartRateVariability", (v) => ({
+    // Overnight vitals, one point per day. Filters name the type in snake_case
+    // (daily_resting_heart_rate); responses use camelCase fields (dailyRestingHeartRate).
+    const daily: Array<[string, string, string[], (value: any) => Record<string, unknown>]> = [
+      ["daily-resting-heart-rate", "dailyRestingHeartRate", ["resting_hr"], (v) => ({ resting_hr: Number(v.beatsPerMinute) })],
+      ["daily-heart-rate-variability", "dailyHeartRateVariability", ["hrv"], (v) => ({
         hrv: v.averageHeartRateVariabilityMilliseconds ?? v.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds ?? null,
       })],
-      ["daily-oxygen-saturation", "dailyOxygenSaturation", (v) => ({ spo2: v.averagePercentage ?? null })],
-      ["daily-respiratory-rate", "dailyRespiratoryRate", (v) => ({ respiratory_rate: v.breathsPerMinute ?? null })],
-      ["daily-sleep-temperature-derivations", "dailySleepTemperatureDerivations", (v) => ({ skin_temp: v.nightlyTemperatureCelsius ?? null })],
-      ["daily-vo2-max", "dailyVo2Max", (v) => ({ vo2max: v.vo2Max ?? null })],
+      ["daily-oxygen-saturation", "dailyOxygenSaturation", ["spo2"], (v) => ({ spo2: v.averagePercentage ?? null })],
+      ["daily-respiratory-rate", "dailyRespiratoryRate", ["respiratory_rate"], (v) => ({ respiratory_rate: v.breathsPerMinute ?? null })],
+      ["daily-sleep-temperature-derivations", "dailySleepTemperatureDerivations", ["skin_temp"], (v) => ({ skin_temp: v.nightlyTemperatureCelsius ?? null })],
+      ["daily-vo2-max", "dailyVo2Max", ["vo2max"], (v) => ({ vo2max: v.vo2Max ?? null })],
     ];
-    for (const [type, field, map] of daily) {
-      const points = await list(token, type, `${field}.date >= "${start}"`, 10000);
-      for (const point of points) {
-        const value = point[field];
-        if (!value?.date) continue;
-        Object.assign(day(dateString(value.date)), map(value));
-      }
+    for (const [type, field, columns, map] of daily) {
+      await step(type, columns, async () => {
+        const points = await list(token, type, `${type.replaceAll("-", "_")}.date >= "${start}"`, 10000);
+        for (const point of points) {
+          const value = point[field];
+          if (!value?.date) continue;
+          Object.assign(day(dateString(value.date)), map(value));
+        }
+      });
     }
 
     // Sleep: the main sleep that ended on each morning.
-    const sleeps = await list(token, "sleep", `sleep.interval.civil_end_time >= "${start}"`, 25);
-    const chosen = new Map<string, any>();
-    for (const point of sleeps) {
-      const sleep = point.sleep;
-      if (!sleep?.interval || sleep.metadata?.nap) continue;
-      const morning = civilDate(sleep.interval.civilEndTime);
-      const asleep = Number(sleep.summary?.minutesAsleep ?? 0);
-      const current = chosen.get(morning);
-      const currentAsleep = Number(current?.summary?.minutesAsleep ?? -1);
-      if (!current || (sleep.metadata?.mainSleep && !current.metadata?.mainSleep) || asleep > currentAsleep) {
-        chosen.set(morning, sleep);
+    await step("sleep", ["sleep", "sleep_seconds", "bedtime_minutes"], async () => {
+      const sleeps = await list(token, "sleep", `sleep.interval.civil_end_time >= "${start}"`, 25);
+      const chosen = new Map<string, any>();
+      for (const point of sleeps) {
+        const sleep = point.sleep;
+        if (!sleep?.interval || sleep.metadata?.nap) continue;
+        const morning = intervalDate(sleep.interval, "end");
+        const asleep = Number(sleep.summary?.minutesAsleep ?? 0);
+        const current = chosen.get(morning);
+        const currentAsleep = Number(current?.summary?.minutesAsleep ?? -1);
+        if (!current || (sleep.metadata?.mainSleep && !current.metadata?.mainSleep) || asleep > currentAsleep) {
+          chosen.set(morning, sleep);
+        }
       }
-    }
-    for (const [morning, sleep] of chosen) {
-      const stages = (sleep.stages ?? []).map((stage: any) => ({
-        type: stage.type,
-        start: stage.startTime,
-        end: stage.endTime,
-      }));
-      const asleepMinutes = Number(sleep.summary?.minutesAsleep ?? NaN);
-      const stageAsleepSeconds = stages
-        .filter((s: any) => s.type !== "AWAKE" && s.type !== "RESTLESS")
-        .reduce((total: number, s: any) => total + (Date.parse(s.end) - Date.parse(s.start)) / 1000, 0);
-      const record = day(morning);
-      record.sleep = {
-        start: sleep.interval.startTime,
-        end: sleep.interval.endTime,
-        start_offset_seconds: seconds(sleep.interval.startUtcOffset),
-        type: sleep.type,
-        stages,
-        minutes_asleep: Number.isFinite(asleepMinutes) ? asleepMinutes : Math.round(stageAsleepSeconds / 60),
-        minutes_to_fall_asleep: Number(sleep.summary?.minutesToFallAsleep ?? 0),
-      };
-      record.sleep_seconds = Number.isFinite(asleepMinutes) ? asleepMinutes * 60 : stageAsleepSeconds;
-      record.bedtime_minutes = minutesAfterSixPM(sleep.interval.startTime, sleep.interval.startUtcOffset);
-    }
+      for (const [morning, sleep] of chosen) {
+        const stages = (sleep.stages ?? []).map((stage: any) => ({
+          type: stage.type,
+          start: stage.startTime,
+          end: stage.endTime,
+        }));
+        const asleepMinutes = Number(sleep.summary?.minutesAsleep ?? NaN);
+        const stageAsleepSeconds = stages
+          .filter((s: any) => s.type !== "AWAKE" && s.type !== "RESTLESS")
+          .reduce((total: number, s: any) => total + (Date.parse(s.end) - Date.parse(s.start)) / 1000, 0);
+        const record = day(morning);
+        record.sleep = {
+          start: sleep.interval.startTime,
+          end: sleep.interval.endTime,
+          start_offset_seconds: seconds(sleep.interval.startUtcOffset),
+          type: sleep.type,
+          stages,
+          minutes_asleep: Number.isFinite(asleepMinutes) ? asleepMinutes : Math.round(stageAsleepSeconds / 60),
+          minutes_to_fall_asleep: Number(sleep.summary?.minutesToFallAsleep ?? 0),
+        };
+        record.sleep_seconds = Number.isFinite(asleepMinutes) ? asleepMinutes * 60 : stageAsleepSeconds;
+        record.bedtime_minutes = minutesAfterSixPM(sleep.interval.startTime, sleep.interval.startUtcOffset);
+      }
+    });
 
     // Workouts.
-    const exercises = await list(token, "exercise", `exercise.interval.civil_start_time >= "${start}T00:00:00"`, 25);
-    for (const point of exercises) {
-      const exercise = point.exercise;
-      if (!exercise?.interval) continue;
-      const record = day(civilDate(exercise.interval.civilStartTime));
-      const durationSeconds = exercise.activeDuration
-        ? seconds(exercise.activeDuration)
-        : (Date.parse(exercise.interval.endTime) - Date.parse(exercise.interval.startTime)) / 1000;
-      const summary = exercise.metricsSummary ?? {};
-      const sessions = (record.exercises as unknown[] | undefined) ?? [];
-      sessions.push({
-        id: point.name ?? `${exercise.interval.startTime}`,
-        type: exercise.exerciseType,
-        name: exercise.displayName,
-        start: exercise.interval.startTime,
-        end: exercise.interval.endTime,
-        seconds: durationSeconds,
-        kcal: summary.caloriesKcal ?? null,
-        distance_m: summary.distanceMillimeters ? Number(summary.distanceMillimeters) / 1000 : null,
-        avg_hr: summary.averageHeartRateBeatsPerMinute ? Number(summary.averageHeartRateBeatsPerMinute) : null,
-      });
-      record.exercises = sessions;
-      record.exercise_seconds = Number(record.exercise_seconds ?? 0) + durationSeconds;
-    }
+    await step("workouts", ["exercises", "exercise_seconds"], async () => {
+      const exercises = await list(token, "exercise", `exercise.interval.civil_start_time >= "${start}T00:00:00"`, 25);
+      for (const point of exercises) {
+        const exercise = point.exercise;
+        if (!exercise?.interval) continue;
+        const record = day(intervalDate(exercise.interval, "start"));
+        const durationSeconds = exercise.activeDuration
+          ? seconds(exercise.activeDuration)
+          : (Date.parse(exercise.interval.endTime) - Date.parse(exercise.interval.startTime)) / 1000;
+        const summary = exercise.metricsSummary ?? {};
+        const sessions = (record.exercises as unknown[] | undefined) ?? [];
+        sessions.push({
+          id: point.name ?? `${exercise.interval.startTime}`,
+          type: exercise.exerciseType,
+          name: exercise.displayName,
+          start: exercise.interval.startTime,
+          end: exercise.interval.endTime,
+          seconds: durationSeconds,
+          kcal: summary.caloriesKcal ?? null,
+          distance_m: summary.distanceMillimeters ? Number(summary.distanceMillimeters) / 1000 : null,
+          avg_hr: summary.averageHeartRateBeatsPerMinute ? Number(summary.averageHeartRateBeatsPerMinute) : null,
+        });
+        record.exercises = sessions;
+        record.exercise_seconds = Number(record.exercise_seconds ?? 0) + durationSeconds;
+      }
+    });
   } catch (error) {
-    // Don't overwrite good rows with a partial pull.
     const message = error instanceof Error ? error.message : String(error);
     await db(`google_connections?user_id=eq.${userId}`, {
       method: "PATCH",
@@ -411,11 +444,19 @@ async function syncUser(userId: string, days: number) {
     throw error;
   }
 
-  const columns = [
+  const allColumns = [
     "steps", "active_kcal", "hr_avg", "hr_max", "hr_min", "zone_seconds", "resting_hr", "hrv",
     "respiratory_rate", "spo2", "skin_temp", "vo2max", "sleep", "sleep_seconds", "bedtime_minutes",
     "exercises", "exercise_seconds",
   ];
+  const columns = allColumns.filter((column) => !failedColumns.has(column));
+  if (columns.length === 0) {
+    const message = `Sync failed: ${failures.join("; ")}`.slice(0, 500);
+    await db(`google_connections?user_id=eq.${userId}`, { method: "PATCH", body: JSON.stringify({ last_error: message }) });
+    throw new Error(message);
+  }
+
+  // Every row carries the same keys, so the bulk upsert only touches columns that synced.
   const rows = [...records.values()]
     .filter((record) => record.date >= start && record.date < end)
     .map((record) => {
@@ -435,11 +476,15 @@ async function syncUser(userId: string, days: number) {
       body: JSON.stringify(rows),
     });
   }
+  const skipped = failures.map((failure) => failure.split(":")[0]);
   await db(`google_connections?user_id=eq.${userId}`, {
     method: "PATCH",
-    body: JSON.stringify({ last_synced_at: new Date().toISOString(), last_error: null }),
+    body: JSON.stringify({
+      last_synced_at: new Date().toISOString(),
+      last_error: skipped.length > 0 ? `Some data didn't sync (${skipped.join(", ")}). It'll retry within the hour.` : null,
+    }),
   });
-  return { days: rows.length, from: start, to: addDays(end, -1) };
+  return { days: rows.length, from: start, to: addDays(end, -1), failed: failures };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -531,6 +576,19 @@ function dateString(date: { year: number; month: number; day: number }): string 
 
 function civilDate(civil: any): string {
   return dateString(civil?.date ?? civil);
+}
+
+/**
+ * The local calendar date at one end of a session. Uses Google's civil time when present;
+ * otherwise works it out from the instant and its UTC offset (sessions don't always carry
+ * civil times).
+ */
+function intervalDate(interval: any, edge: "start" | "end"): string {
+  const civil = edge === "start" ? interval.civilStartTime : interval.civilEndTime;
+  if (civil?.date) return dateString(civil.date);
+  const instant = edge === "start" ? interval.startTime : interval.endTime;
+  const offset = edge === "start" ? interval.startUtcOffset : interval.endUtcOffset;
+  return new Date(Date.parse(instant) + seconds(offset) * 1000).toISOString().slice(0, 10);
 }
 
 /** "3600s" or "-1.5s" → seconds. */
