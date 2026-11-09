@@ -12,6 +12,8 @@ enum AppTab: Hashable {
 struct RootTabView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(AccountService.self) private var account
+    @Environment(ExperimentStore.self) private var experiments
+    @Environment(EveningCheckIn.self) private var checkIn
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppTab = .today
 
@@ -38,8 +40,14 @@ struct RootTabView: View {
         .task { await account.start() }
         .onChange(of: settings.syncedValues) { account.settingsChanged() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await account.syncIfStale() } }
+            if phase == .active {
+                Task {
+                    await account.syncIfStale()
+                    await checkIn.reschedule()
+                }
+            }
         }
+        .onChange(of: experiments.experiments) { Task { await checkIn.reschedule() } }
         // Derived here, inside a view, so unit changes in Settings re-render every screen.
         .environment(\.metricFormatter, settings.formatter)
         .environment(\.dataVersion, account.dataVersion)

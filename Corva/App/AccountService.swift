@@ -390,6 +390,19 @@ final class AccountService {
         dataVersion += 1
     }
 
+    // MARK: - Tagging from outside the app
+
+    /// Records an evening's tag from a notification or Shortcuts. If the app was launched just
+    /// for this, the account's experiments are loaded first; then it waits for the push so the
+    /// answer reaches the server before iOS suspends the app again.
+    func setTag(evening: Date, isOn: Bool, experimentID: UUID) async {
+        if isSignedIn, experiments.experiment(id: experimentID) == nil {
+            await refresh()
+        }
+        experiments.setTag(evening: evening, isOn: isOn, in: experimentID)
+        await queue?.value
+    }
+
     // MARK: - Settings
 
     /// Call when a synced setting changes. Pushes a second later, so a run of taps on the

@@ -49,6 +49,12 @@ final class ExperimentStore {
         remote?.experimentTag(evening: evening, isOn: isOn, in: id)
     }
 
+    /// Sets the evening's tag to a known value (from a notification or Shortcuts answer).
+    func setTag(evening: Date, isOn: Bool, in id: Experiment.ID) {
+        guard let experiment = experiment(id: id), experiment.taggedEvenings.contains(evening) != isOn else { return }
+        toggleTag(evening: evening, in: id)
+    }
+
     /// Stops an experiment early by shortening it to the days already measured.
     func end(_ id: Experiment.ID, today: Date, calendar: Calendar = .current) {
         guard let index = experiments.firstIndex(where: { $0.id == id }) else { return }

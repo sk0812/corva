@@ -13,6 +13,8 @@ struct SettingsView: View {
 
                 DataSourcesSection()
 
+                CheckInSection()
+
                 Section("Appearance") {
                     Picker("Appearance", selection: $settings.appearance) {
                         ForEach(AppSettings.Appearance.allCases) { appearance in

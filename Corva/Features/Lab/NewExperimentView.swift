@@ -4,6 +4,7 @@ import SwiftUI
 struct NewExperimentView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ExperimentStore.self) private var store
+    @Environment(EveningCheckIn.self) private var checkIn
     @Environment(\.healthDataProvider) private var provider
     @Environment(\.metricFormatter) private var format
     @State private var title: String
@@ -108,6 +109,10 @@ struct NewExperimentView: View {
                                 ? Experiment.randomPlan(start: start, length: length, calendar: calendar)
                                 : []
                         ))
+                        // Tagged designs are answered from the evening check-in.
+                        if design != .beforeAfter {
+                            Task { await checkIn.requestAuthorizationIfNeeded() }
+                        }
                         dismiss()
                     }
                     .tint(CorvaColor.bioAge)

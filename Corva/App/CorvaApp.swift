@@ -2,43 +2,24 @@ import SwiftUI
 
 @main
 struct CorvaApp: App {
-    @State private var settings: AppSettings
-    @State private var experiments: ExperimentStore
-    @State private var pacts: PactStore
-    @State private var account: AccountService
+    private let container = AppContainer.shared
 
     init() {
-        // Demo data until an account with Google Health connected takes over (AccountService
-        // picks the provider; nothing downstream knows which it is).
-        let mock = MockHealthDataProvider()
-        let settings = AppSettings()
-        // Demo data, seeded from the same simulated behaviour the mock days reflect. Signing
-        // in swaps in the account's own experiments and pacts.
-        let experiments = ExperimentStore.mock(lifestyle: mock.lifestyle)
-        let pacts = PactStore.mock(lifestyle: mock.lifestyle)
-        _settings = State(initialValue: settings)
-        _experiments = State(initialValue: experiments)
-        _pacts = State(initialValue: pacts)
-        _account = State(initialValue: AccountService(
-            client: SupabaseClient(),
-            settings: settings,
-            experiments: experiments,
-            pacts: pacts,
-            demoProvider: mock
-        ))
+        container.checkIn.activate()
     }
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
-                .environment(settings)
-                .environment(experiments)
-                .environment(pacts)
-                .environment(account)
-                .environment(\.healthDataProvider, account.healthDataProvider)
-                .environment(\.isShowingDemoData, !account.usesRealData)
+                .environment(container.settings)
+                .environment(container.experiments)
+                .environment(container.pacts)
+                .environment(container.account)
+                .environment(container.checkIn)
+                .environment(\.healthDataProvider, container.account.healthDataProvider)
+                .environment(\.isShowingDemoData, !container.account.usesRealData)
                 // Follows the system unless Settings › Appearance picks light or dark.
-                .preferredColorScheme(settings.appearance.colorScheme)
+                .preferredColorScheme(container.settings.appearance.colorScheme)
                 .tint(CorvaColor.accent)
         }
     }
