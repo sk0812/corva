@@ -43,6 +43,9 @@ private struct PactDetailContent: View {
                             ParticipantRow(name: name, standing: friend)
                         }
                     }
+                    if let sync = pact.sync, sync.status == .pending, sync.isCreator, let name = pact.mode.friendName {
+                        PactInviteBlock(friendName: name, code: sync.inviteCode)
+                    }
                     PactStatusLine(evaluation: evaluation)
                 }
             }

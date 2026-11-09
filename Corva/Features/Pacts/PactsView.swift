@@ -3,8 +3,11 @@ import SwiftUI
 /// Goals with money on them, refereed by your wearable.
 struct PactsView: View {
     @Environment(\.healthDataProvider) private var provider
+    @Environment(AccountService.self) private var account
     @State private var model = PactsViewModel()
     @State private var isAddingPact = false
+    @State private var isJoiningPact = false
+    @State private var isShowingSignInNote = false
 
     var body: some View {
         NavigationStack {
@@ -12,7 +15,10 @@ struct PactsView: View {
                 ScrollView {
                     PactsContent(days: days, model: model, addPact: { isAddingPact = true })
                 }
-                .refreshable { await model.load(using: provider) }
+                .refreshable {
+                    await account.refresh()
+                    await model.load(using: provider)
+                }
             }
             .screenBackground(glow: CorvaColor.pact.opacity(0.8))
             .navigationTitle("Pacts")
@@ -20,7 +26,16 @@ struct PactsView: View {
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("New pact", systemImage: "plus") { isAddingPact = true }
+                    Menu("Add", systemImage: "plus") {
+                        Button("New pact", systemImage: "target") { isAddingPact = true }
+                        Button("Join with a code", systemImage: "person.2") {
+                            if account.isSignedIn {
+                                isJoiningPact = true
+                            } else {
+                                isShowingSignInNote = true
+                            }
+                        }
+                    }
                 }
             }
             .navigationDestination(for: Pact.ID.self) { id in
@@ -28,6 +43,14 @@ struct PactsView: View {
             }
             .sheet(isPresented: $isAddingPact) {
                 NewPactView()
+            }
+            .sheet(isPresented: $isJoiningPact) {
+                JoinPactView()
+            }
+            .alert("Sign in to join a pact", isPresented: $isShowingSignInNote) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Joining a friend’s pact needs an account. Sign in from Settings › Account.")
             }
         }
         .task { await model.load(using: provider) }
@@ -38,6 +61,7 @@ private struct PactsContent: View {
     let days: [DailySummary]
     let model: PactsViewModel
     let addPact: () -> Void
+    @Environment(AccountService.self) private var account
     @Environment(PactStore.self) private var store
     @Environment(AppSettings.self) private var settings
     @Environment(\.metricFormatter) private var format
@@ -83,7 +107,9 @@ private struct PactsContent: View {
                 }
             }
 
-            Text("Payments aren’t connected yet: Corva tracks each stake, but no money moves. Friends’ numbers are simulated until they can connect their own accounts.")
+            Text(account.isSignedIn
+                 ? "Payments aren’t connected yet: Corva tracks each stake, but no money moves. A friend’s days appear once the server starts settling pacts."
+                 : "Demo pacts. Payments aren’t connected yet: Corva tracks each stake, but no money moves. Friends’ numbers here are simulated.")
                 .textStyle(.caption)
                 .padding(.horizontal, Spacing.xxs)
         }
@@ -132,6 +158,9 @@ private struct ActivePactCard: View {
                     if let friend = evaluation.friend, let name = pact.mode.friendName {
                         ParticipantRow(name: name, standing: friend)
                     }
+                }
+                if let sync = pact.sync, sync.status == .pending, sync.isCreator, let name = pact.mode.friendName {
+                    PactInviteBlock(friendName: name, code: sync.inviteCode)
                 }
                 if let progress = todayProgress {
                     VStack(alignment: .leading, spacing: Spacing.xxs) {

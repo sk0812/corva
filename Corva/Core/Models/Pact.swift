@@ -135,9 +135,27 @@ nonisolated struct Pact: Identifiable, Hashable, Sendable {
     /// Days when your vitals show you were unwell don't count. Detected from data, so it
     /// can't be claimed.
     var sickDayPass: Bool
-    /// A head-to-head friend's daily values, keyed by pact day. Until friends can connect
-    /// their own accounts these are simulated.
+    /// A head-to-head friend's daily values, keyed by pact day. Simulated in demo pacts;
+    /// empty for real pacts until the server settles days.
     var friendValues: [Date: Double]
+    /// How the pact stands on the server. Nil for demo pacts.
+    var sync: Sync?
+
+    nonisolated struct Sync: Hashable, Sendable {
+        nonisolated enum Status: String, Hashable, Sendable {
+            /// Head to head, waiting for the friend to accept.
+            case pending
+            case active
+            case finished
+            case cancelled
+        }
+
+        var status: Status
+        /// The code a friend enters to join. Only the creator sees it.
+        var inviteCode: String?
+        var isCreator: Bool
+        var friendJoined: Bool
+    }
 
     init(
         id: UUID = UUID(),
@@ -150,7 +168,8 @@ nonisolated struct Pact: Identifiable, Hashable, Sendable {
         currencyCode: String,
         mode: Mode,
         sickDayPass: Bool,
-        friendValues: [Date: Double] = [:]
+        friendValues: [Date: Double] = [:],
+        sync: Sync? = nil
     ) {
         self.id = id
         self.goal = goal
@@ -163,6 +182,7 @@ nonisolated struct Pact: Identifiable, Hashable, Sendable {
         self.mode = mode
         self.sickDayPass = sickDayPass
         self.friendValues = friendValues
+        self.sync = sync
     }
 
     func days(calendar: Calendar) -> [Date] {

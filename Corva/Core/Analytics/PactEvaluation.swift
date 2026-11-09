@@ -72,9 +72,10 @@ nonisolated enum PactEvaluation {
         return makeStanding(days: days, pact: pact)
     }
 
-    /// A head-to-head friend's standing, from the values they've shared.
+    /// A head-to-head friend's standing, from the values they've shared. Nil until there are
+    /// any (a real pact before the server has settled a day).
     static func friendStanding(for pact: Pact, today: Date, calendar: Calendar = .current) -> Standing? {
-        guard case .headToHead = pact.mode else { return nil }
+        guard case .headToHead = pact.mode, !pact.friendValues.isEmpty else { return nil }
         let days = pact.days(calendar: calendar).map { date in
             day(date: date, value: pact.friendValues[date], isUnwell: false, pact: pact, today: today, calendar: calendar)
         }

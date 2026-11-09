@@ -7,6 +7,7 @@ extension View {
             .environment(AppSettings())
             .environment(ExperimentStore.preview)
             .environment(PactStore.preview)
+            .environment(AccountService.preview)
             .environment(\.healthDataProvider, MockHealthDataProvider.preview)
             .preferredColorScheme(.dark)
             .tint(CorvaColor.accent)

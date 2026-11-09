@@ -10,6 +10,8 @@ struct SettingsView: View {
 
         NavigationStack {
             List {
+                AccountSection()
+
                 Section {
                     ForEach(DataSource.allCases) { source in
                         DataSourceRow(source: source, status: model.status(for: source))

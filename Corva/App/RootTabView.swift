@@ -11,6 +11,7 @@ enum AppTab: Hashable {
 /// The system tab bar, which adopts Liquid Glass on its own.
 struct RootTabView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(AccountService.self) private var account
     @State private var selection: AppTab = .today
 
     var body: some View {
@@ -32,6 +33,8 @@ struct RootTabView: View {
             }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: selection)
+        .task { await account.start() }
+        .onChange(of: settings.syncedValues) { account.settingsChanged() }
         // Derived here, inside a view, so unit changes in Settings re-render every screen.
         .environment(\.metricFormatter, settings.formatter)
     }

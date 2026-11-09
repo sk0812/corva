@@ -32,6 +32,11 @@ final class AppSettings {
         Profile(age: age, sex: sex)
     }
 
+    /// The settings that sync to the account, for change detection.
+    var syncedValues: [String] {
+        [String(age), sex.rawValue, currencyCode, appearance.rawValue, temperatureUnit.rawValue, distanceUnit.rawValue]
+    }
+
     enum Appearance: String, CaseIterable, Identifiable {
         case system
         case light

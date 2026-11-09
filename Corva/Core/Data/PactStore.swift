@@ -1,11 +1,19 @@
 import Foundation
 import Observation
 
-/// The user's pacts. In memory for now. Real pacts need a backend: to hold stakes with a
-/// payment provider, and to receive a head-to-head friend's verified numbers.
+/// Receives new pacts to create on the server.
+protocol PactSyncing: AnyObject {
+    /// Whether new pacts go to an account (signed in) or stay local demo pacts.
+    var isConnected: Bool { get }
+    func pactCreated(_ pact: Pact)
+}
+
+/// The user's pacts. In memory; when signed in, new pacts are created on the server through
+/// `remote`, and a sign-in or refresh replaces the contents with the account's.
 @Observable
 final class PactStore {
     private(set) var pacts: [Pact]
+    @ObservationIgnored weak var remote: (any PactSyncing)?
 
     init(pacts: [Pact] = []) {
         self.pacts = pacts
@@ -15,13 +23,31 @@ final class PactStore {
         pacts.first { $0.id == id }
     }
 
-    /// Adds a pact. Head-to-head friends get simulated numbers until friends can connect.
+    /// Adds a pact. Signed in, it's created on the server (which then sends back its status
+    /// and invite code). Signed out, it's a demo pact and a head-to-head friend gets
+    /// simulated numbers.
     func add(_ pact: Pact, calendar: Calendar = .current) {
+        if let remote, remote.isConnected {
+            pacts.insert(pact, at: 0)
+            remote.pactCreated(pact)
+            return
+        }
         var pact = pact
         if case .headToHead = pact.mode, pact.friendValues.isEmpty {
             pact.friendValues = MockFriend.values(for: pact, seed: UInt64(truncatingIfNeeded: pact.id.hashValue), calendar: calendar)
         }
         pacts.insert(pact, at: 0)
+    }
+
+    /// Replaces one pact with a newer version, e.g. the server's copy after creation.
+    func update(_ pact: Pact) {
+        guard let index = pacts.firstIndex(where: { $0.id == pact.id }) else { return }
+        pacts[index] = pact
+    }
+
+    /// Swaps in a whole set (the account's, or demo data on sign-out) without pushing anything.
+    func replace(with pacts: [Pact]) {
+        self.pacts = pacts
     }
 }
 

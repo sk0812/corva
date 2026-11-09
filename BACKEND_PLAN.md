@@ -1,5 +1,23 @@
 # Corva: plan for linking a backend
 
+**Status (9 Nov 2026):**
+- **Supabase project `corva` is live (London).** The schema is in `supabase/migrations`, with
+  row-level security on every table.
+- **The app signs in** with Google, or by email with a one-time code. The session is kept in the
+  Keychain.
+- **Sync:**
+  - **Profile and settings:** both ways.
+  - **Experiments and tags:** pulled at sign-in and launch; local changes pushed as they happen.
+  - **Pacts:** pulled the same way; new pacts are created on the server. Head-to-head pacts get
+    an invite code, and a friend joins with Pacts › + › Join with a code.
+- **The client** is a small hand-written one (`Core/Backend/SupabaseClient.swift`), using only
+  Apple frameworks.
+- **Not yet built:**
+  - the settlement worker (so a friend's days stay empty);
+  - Apple Health;
+  - Google Health (Google isn't onboarding new projects);
+  - payments.
+
 A draft for discussion. It covers what the backend is for, a recommended shape, how the
 existing app code plugs in, the data model, and a phased order of work. Decisions that are
 yours to make are collected at the end.
