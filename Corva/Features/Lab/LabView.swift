@@ -223,6 +223,8 @@ private struct BestDaysSummaryCard: View {
 private struct ExperimentCard: View {
     let experiment: Experiment
     let result: ExperimentAnalysis.Result
+    private let calendar = Calendar.current
+    private var today: Date { calendar.startOfDay(for: .now) }
     @Environment(\.metricFormatter) private var format
 
     var body: some View {
@@ -255,6 +257,16 @@ private struct ExperimentCard: View {
                 }
                 ProgressBar(fraction: Double(result.daysElapsed) / Double(max(experiment.length, 1)), tint: CorvaColor.neutralData, height: 4)
                     .padding(.top, Spacing.xxs)
+                if experiment.design == .randomised,
+                   !experiment.isComplete(today: today, calendar: calendar),
+                   experiment.evenings(calendar: calendar).contains(today) {
+                    Label(
+                        experiment.isOnNight(today, calendar: calendar) ? "Tonight: ON night" : "Tonight: OFF night",
+                        systemImage: experiment.isOnNight(today, calendar: calendar) ? "checkmark.circle.fill" : "moon.zzz.fill"
+                    )
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(experiment.isOnNight(today, calendar: calendar) ? CorvaColor.bioAge : CorvaColor.textSecondary)
+                }
             }
         }
     }

@@ -26,6 +26,10 @@ final class ExperimentStore {
     func add(_ experiment: Experiment) {
         experiments.insert(experiment, at: 0)
         remote?.experimentSaved(experiment)
+        // A randomised experiment's plan is stored as its tags.
+        for evening in experiment.taggedEvenings.sorted() {
+            remote?.experimentTag(evening: evening, isOn: true, in: experiment.id)
+        }
     }
 
     /// Swaps in a whole set (the account's, or demo data on sign-out) without pushing anything.

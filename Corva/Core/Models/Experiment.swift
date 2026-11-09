@@ -11,6 +11,10 @@ nonisolated struct Experiment: Identifiable, Hashable, Sendable {
         case beforeAfter
         /// Do it on some days and not others, compared within the same weeks.
         case onOff
+        /// Corva picks which nights are ON and which are OFF, at random and balanced by
+        /// weekday, so habits that come with the behaviour (late Fridays) can't masquerade as
+        /// its effect.
+        case randomised
 
         var id: String { rawValue }
 
@@ -18,6 +22,7 @@ nonisolated struct Experiment: Identifiable, Hashable, Sendable {
             switch self {
             case .beforeAfter: "Before & after"
             case .onOff: "On & off days"
+            case .randomised: "Randomised nights"
             }
         }
 
@@ -27,6 +32,8 @@ nonisolated struct Experiment: Identifiable, Hashable, Sendable {
                 "Do it every day. Corva compares the experiment with your previous four weeks."
             case .onOff:
                 "Do it on some days only and tag them. Corva compares the mornings after with the rest."
+            case .randomised:
+                "Corva picks your ON and OFF nights at random, balanced across weekdays. It’s the most reliable way to see what something really does."
             }
         }
     }
@@ -74,6 +81,39 @@ nonisolated struct Experiment: Identifiable, Hashable, Sendable {
     /// Every evening of the experiment, from `start`, oldest first.
     func evenings(calendar: Calendar) -> [Date] {
         (0..<length).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    /// Compares tagged mornings against untagged ones (on & off and randomised designs).
+    var usesTags: Bool { design != .beforeAfter }
+
+    /// For randomised experiments: whether `evening` is an ON night in the plan.
+    func isOnNight(_ evening: Date, calendar: Calendar) -> Bool {
+        taggedEvenings.contains(calendar.startOfDay(for: evening))
+    }
+
+    /// A random plan for `length` evenings from `start`: within each weekday, half the
+    /// evenings are ON (alternating which half gets the odd one out), so ON and OFF nights are
+    /// spread evenly across the week.
+    static func randomPlan(start: Date, length: Int, calendar: Calendar) -> Set<Date> {
+        var generator = SystemRandomNumberGenerator()
+        return randomPlan(start: start, length: length, calendar: calendar, using: &generator)
+    }
+
+    static func randomPlan<G: RandomNumberGenerator>(start: Date, length: Int, calendar: Calendar, using generator: inout G) -> Set<Date> {
+        let evenings = (0..<length).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+        let byWeekday = Dictionary(grouping: evenings) { calendar.component(.weekday, from: $0) }
+        var on: Set<Date> = []
+        var extraGoesOn = Bool.random(using: &generator)
+        for weekday in byWeekday.keys.sorted() {
+            let group = byWeekday[weekday]!.shuffled(using: &generator)
+            var count = group.count / 2
+            if group.count % 2 == 1 {
+                if extraGoesOn { count += 1 }
+                extraGoesOn.toggle()
+            }
+            on.formUnion(group.prefix(count))
+        }
+        return on
     }
 
     func isTagged(morning: Date, calendar: Calendar) -> Bool {

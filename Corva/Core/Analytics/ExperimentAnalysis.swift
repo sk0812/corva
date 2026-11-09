@@ -15,6 +15,19 @@ nonisolated enum ExperimentAnalysis {
     /// z for 80% power, added to the critical t for the minimum detectable effect.
     private static let powerZ = 0.84
 
+    /// Before starting: roughly the smallest change in a metric whose day-to-day spread is
+    /// `standardDeviation` that an experiment of `length` days could reliably catch.
+    static func plannedSensitivity(design: Experiment.Design, length: Int, standardDeviation: Double) -> Double {
+        let n = Double(max(length, 2))
+        let (control, trial): (Double, Double) = switch design {
+        case .beforeAfter: (Double(baselineDays), n)
+        case .randomised: (n / 2, n / 2)
+        case .onOff: (n * 0.7, n * 0.3)  // typical share of tagged evenings
+        }
+        let t = tCritical(degreesOfFreedom: control + trial - 2)
+        return (t + powerZ) * standardDeviation * (1 / control + 1 / max(trial, 1)).squareRoot()
+    }
+
     nonisolated struct Sample: Hashable, Sendable {
         let mean: Double
         let standardDeviation: Double
@@ -86,7 +99,7 @@ nonisolated enum ExperimentAnalysis {
             let baselineStart = calendar.date(byAdding: .day, value: -(baselineDays - 1), to: experiment.start) ?? experiment.start
             control = days.filter { $0.date >= baselineStart && $0.date <= experiment.start }
             trial = measured
-        case .onOff:
+        case .onOff, .randomised:
             trial = measured.filter { experiment.isTagged(morning: $0.date, calendar: calendar) }
             control = measured.filter { !experiment.isTagged(morning: $0.date, calendar: calendar) }
         }
@@ -100,7 +113,7 @@ nonisolated enum ExperimentAnalysis {
         let projected: (control: Double, trial: Double) = switch experiment.design {
         case .beforeAfter:
             (Double(control.count), Double(experiment.length))
-        case .onOff:
+        case .onOff, .randomised:
             {
                 let share = measured.isEmpty ? 0.3 : Double(trial.count) / Double(measured.count)
                 return (Double(experiment.length) * (1 - share), Double(experiment.length) * share)

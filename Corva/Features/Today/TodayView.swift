@@ -102,6 +102,9 @@ private struct TodayContent: View {
                     text: "Last night hasn’t synced yet. Showing \(content.day.date.formatted(.dateTime.weekday(.wide)))."
                 )
             }
+            if content.day.isLikelyUnwell {
+                IllnessBanner(signals: content.day.unwellSignals)
+            }
             if !content.day.baseline.isCalibrated {
                 ScreenNotice(
                     symbol: "gauge.with.dots.needle.33percent",

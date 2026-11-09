@@ -72,6 +72,7 @@ private struct ExperimentContent: View {
     var body: some View {
         VStack(spacing: Spacing.m) {
             header
+            TonightPlan(experiment: experiment, today: model.today, calendar: model.calendar)
             if let headline = result.headline {
                 HeadlineCard(outcome: headline)
             }
@@ -79,7 +80,7 @@ private struct ExperimentContent: View {
             if let headline = result.headline {
                 chart(for: headline.metric)
             }
-            if experiment.design == .onOff {
+            if experiment.usesTags {
                 TagCalendar(experiment: experiment, today: model.today, calendar: model.calendar)
             }
             sensitivity
@@ -135,8 +136,8 @@ private struct ExperimentContent: View {
                     formatValue: { $0.formatted(.number.precision(.fractionLength(format.fractionDigits(for: metric)))) }
                 )
                 ChartLegend(items: [
-                    .init(label: experiment.design == .onOff ? "After tagged evenings" : "During", color: CorvaColor.bioAge),
-                    .init(label: experiment.design == .onOff ? "Other mornings" : "Four weeks before", color: CorvaColor.neutralData.opacity(0.5)),
+                    .init(label: experiment.usesTags ? "After ON evenings" : "During", color: CorvaColor.bioAge),
+                    .init(label: experiment.usesTags ? "Other mornings" : "Four weeks before", color: CorvaColor.neutralData.opacity(0.5)),
                 ])
             }
         }
@@ -300,15 +301,24 @@ private struct TagCalendar: View {
     let calendar: Calendar
     @Environment(ExperimentStore.self) private var store
 
+    /// Randomised experiments show the whole plan; others only evenings so far.
     private var evenings: [Date] {
-        experiment.evenings(calendar: calendar).filter { $0 <= today }
+        let all = experiment.evenings(calendar: calendar)
+        return experiment.design == .randomised ? all : all.filter { $0 <= today }
     }
+
+    private var isPlan: Bool { experiment.design == .randomised }
 
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: Spacing.m) {
-                CardHeader(title: "Tag evenings", detail: "\(experiment.taggedEvenings.count) tagged")
-                Text("Tap each evening you did it. Results update as you go.")
+                CardHeader(
+                    title: isPlan ? "Your plan" : "Tag evenings",
+                    detail: isPlan ? "\(experiment.taggedEvenings.count) ON nights" : "\(experiment.taggedEvenings.count) tagged"
+                )
+                Text(isPlan
+                     ? "Filled nights are ON. If a night didn’t go to plan, tap it so the results reflect what you actually did."
+                     : "Tap each evening you did it. Results update as you go.")
                     .textStyle(.caption)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Spacing.xs), count: 7), spacing: Spacing.xs) {
                     ForEach(evenings, id: \.self) { evening in
@@ -329,6 +339,8 @@ private struct TagCalendar: View {
                             .background(isTagged ? CorvaColor.bioAge : CorvaColor.ringTrack, in: .rect(cornerRadius: Radius.s))
                         }
                         .buttonStyle(.plain)
+                        .disabled(evening > today)
+                        .opacity(evening > today ? 0.55 : 1)
                         .accessibilityLabel(evening.formatted(date: .complete, time: .omitted))
                         .accessibilityAddTraits(isTagged ? .isSelected : [])
                     }
@@ -336,6 +348,39 @@ private struct TagCalendar: View {
             }
         }
         .sensoryFeedback(.selection, trigger: experiment.taggedEvenings)
+    }
+}
+
+/// For a running randomised experiment: whether tonight is an ON or OFF night.
+struct TonightPlan: View {
+    let experiment: Experiment
+    let today: Date
+    let calendar: Calendar
+
+    var body: some View {
+        if experiment.design == .randomised,
+           !experiment.isComplete(today: today, calendar: calendar),
+           experiment.evenings(calendar: calendar).contains(today) {
+            let isOn = experiment.isOnNight(today, calendar: calendar)
+            HStack(spacing: Spacing.s) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "moon.zzz.fill")
+                    .font(.title3)
+                    .foregroundStyle(isOn ? CorvaColor.bioAge : CorvaColor.textSecondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isOn ? "Tonight is an ON night" : "Tonight is an OFF night")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(CorvaColor.textPrimary)
+                    Text(isOn ? "\(experiment.title): do it tonight." : "\(experiment.title): skip it tonight.")
+                        .textStyle(.caption)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Spacing.m)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular.tint(isOn ? CorvaColor.bioAge.opacity(0.15) : nil), in: .rect(cornerRadius: Radius.m))
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 

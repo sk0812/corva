@@ -47,7 +47,7 @@ final class LabViewModel {
     /// On & off experiments double as tags for the best/worst comparison.
     private func tags(from experiments: [Experiment]) -> [DayContrast.Tag] {
         experiments.compactMap { experiment in
-            guard experiment.design == .onOff,
+            guard experiment.usesTags,
                   let lastTracked = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
             let lastEvening = min(experiment.evenings(calendar: calendar).last ?? experiment.start, lastTracked)
             guard lastEvening >= experiment.start else { return nil }

@@ -6,6 +6,7 @@ struct BestDaysView: View {
     @Environment(ExperimentStore.self) private var experiments
     @State private var model = LabViewModel()
     @State private var ranking: DayContrast.Ranking = .recovery
+    @State private var idea: ExperimentIdea?
 
     var body: some View {
         LoadStateView(model.state) { days in
@@ -20,7 +21,7 @@ struct BestDaysView: View {
                     .padding(.bottom, Spacing.xs)
 
                     if let result = model.contrast(in: days, rankingBy: ranking, experiments: experiments.experiments) {
-                        BestDaysContent(result: result)
+                        BestDaysContent(result: result, test: { idea = $0 })
                     }
                 }
                 .padding(.horizontal, Spacing.screen)
@@ -32,12 +33,16 @@ struct BestDaysView: View {
         .navigationTitle("Best vs worst days")
         .navigationBarTitleDisplayMode(.inline)
         .sensoryFeedback(.selection, trigger: ranking)
+        .sheet(item: $idea) { idea in
+            NewExperimentView(title: idea.title, design: idea.design)
+        }
         .task(id: dataVersion) { await model.load(using: provider) }
     }
 }
 
 private struct BestDaysContent: View {
     let result: DayContrast.Result
+    let test: (ExperimentIdea) -> Void
     @Environment(\.metricFormatter) private var format
 
     private var metric: Metric { result.ranking.metric }
@@ -88,7 +93,7 @@ private struct BestDaysContent: View {
                     VStack(spacing: 0) {
                         ForEach(Array(result.factors.enumerated()), id: \.element.id) { index, factor in
                             if index > 0 { CardDivider() }
-                            FactorRow(factor: factor)
+                            FactorRow(factor: factor, onTest: factor.strength == .none ? nil : factor.kind.experimentIdea.map { idea in { test(idea) } })
                                 .padding(.vertical, Spacing.s)
                         }
                     }
@@ -105,6 +110,8 @@ private struct BestDaysContent: View {
 /// One factor: best-day and worst-day averages on a shared scale, and how big the gap is.
 struct FactorRow: View {
     let factor: DayContrast.Factor
+    /// Opens a pre-filled experiment, for factors you can actually change.
+    var onTest: (() -> Void)?
     @Environment(\.metricFormatter) private var format
 
     var body: some View {
@@ -124,6 +131,14 @@ struct FactorRow: View {
                 Spacer()
                 label("Worst", value: factor.worst, color: CorvaColor.worse)
             }
+            if let onTest {
+                Button(action: onTest) {
+                    Label("Test this", systemImage: "flask")
+                        .font(.footnote.weight(.semibold))
+                }
+                .buttonStyle(.glass)
+                .accessibilityHint("Starts a randomised experiment to see whether this really makes a difference")
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(factor.kind.title): best days \(format.factor(factor.best, kind: factor.kind)), worst days \(format.factor(factor.worst, kind: factor.kind)). \(factor.strength.rawValue).")
@@ -138,6 +153,32 @@ struct FactorRow: View {
                 .foregroundStyle(CorvaColor.textSecondary)
         }
         .font(.caption)
+    }
+}
+
+/// A ready-made experiment for a factor that stood out.
+struct ExperimentIdea: Identifiable {
+    let title: String
+    let design: Experiment.Design
+    var id: String { title }
+}
+
+extension DayContrast.FactorKind {
+    /// What you could test about this factor. Nil for things you can't choose (weekends,
+    /// being unwell) or that are outcomes rather than behaviours.
+    var experimentIdea: ExperimentIdea? {
+        switch self {
+        case .bedtime, .timeInBed, .timeAsleep:
+            ExperimentIdea(title: "In bed 30 minutes earlier", design: .randomised)
+        case .priorStrain, .priorHardMinutes:
+            ExperimentIdea(title: "Easier training day", design: .randomised)
+        case .restorativeSleep, .awakenings:
+            ExperimentIdea(title: "No screens in the hour before bed", design: .randomised)
+        case .tag(let name):
+            ExperimentIdea(title: name, design: .randomised)
+        case .priorSteps, .wakeTime, .weekend, .unwell:
+            nil
+        }
     }
 }
 

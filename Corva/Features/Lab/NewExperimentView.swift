@@ -4,16 +4,25 @@ import SwiftUI
 struct NewExperimentView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(ExperimentStore.self) private var store
-    @State private var title = ""
-    @State private var design: Experiment.Design = .beforeAfter
+    @Environment(\.healthDataProvider) private var provider
+    @Environment(\.metricFormatter) private var format
+    @State private var title: String
+    @State private var design: Experiment.Design
     @State private var outcomes: [Metric] = [.recovery, .hrv, .sleep]
     @State private var length = 21
+    /// Recent history, for estimating what each length can detect.
+    @State private var history: [DailySummary] = []
+
+    init(title: String = "", design: Experiment.Design = .randomised) {
+        _title = State(initialValue: title)
+        _design = State(initialValue: design)
+    }
 
     private static let suggestions: [(title: String, design: Experiment.Design)] = [
-        ("No caffeine after 2 PM", .beforeAfter),
+        ("No caffeine after 2 PM", .randomised),
         ("Evening alcohol", .onOff),
-        ("Magnesium before bed", .beforeAfter),
-        ("Screens off by 10 PM", .beforeAfter),
+        ("Magnesium before bed", .randomised),
+        ("Screens off by 10 PM", .randomised),
         ("Late workout", .onOff),
     ]
     private static let measurable: [Metric] = [.recovery, .hrv, .sleep, .restingHeartRate, .respiratoryRate, .skinTemperature]
@@ -47,7 +56,6 @@ struct NewExperimentView: View {
                             Text(design.title).tag(design)
                         }
                     }
-                    .pickerStyle(.segmented)
                 } header: {
                     Text("How to compare")
                 } footer: {
@@ -74,11 +82,12 @@ struct NewExperimentView: View {
                 } header: {
                     Text("Length")
                 } footer: {
-                    Text("Starts tonight. Longer experiments can detect smaller effects.")
+                    Text(lengthFooter)
                 }
             }
             .scrollContentBackground(.hidden)
             .background(CorvaColor.background)
+            .task { history = (try? await provider.summaries(endingOn: .now, count: Baseline.windowDays)) ?? [] }
             .navigationTitle("New experiment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -87,12 +96,17 @@ struct NewExperimentView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Start", role: .confirm) {
+                        let calendar = Calendar.current
+                        let start = calendar.startOfDay(for: .now)
                         store.add(Experiment(
                             title: title.trimmingCharacters(in: .whitespaces),
                             design: design,
-                            start: Calendar.current.startOfDay(for: .now),
+                            start: start,
                             length: length,
-                            outcomes: outcomes
+                            outcomes: outcomes,
+                            taggedEvenings: design == .randomised
+                                ? Experiment.randomPlan(start: start, length: length, calendar: calendar)
+                                : []
                         ))
                         dismiss()
                     }
@@ -101,6 +115,21 @@ struct NewExperimentView: View {
                 }
             }
         }
+    }
+
+    private var lengthFooter: String {
+        var text = design == .randomised
+            ? "Starts tonight. Corva shows each evening whether it’s an ON or OFF night."
+            : "Starts tonight. Longer experiments can detect smaller effects."
+        if let metric = outcomes.first {
+            let values = history.compactMap(metric.value(in:))
+            let spread = Statistics.standardDeviation(values)
+            if values.count >= Baseline.minimumDays, spread > 0 {
+                let detectable = ExperimentAnalysis.plannedSensitivity(design: design, length: length, standardDeviation: spread)
+                text += " Over \(length) days it should catch a change of about ±\(format.valueWithUnit(detectable, for: metric)) in \(metric.title)."
+            }
+        }
+        return text
     }
 
     /// Keeps selection order, so the first metric picked stays the headline.
