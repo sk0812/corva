@@ -87,8 +87,9 @@ final class MorningBriefing {
         await account.refreshHealthData()
         let today = calendar.startOfDay(for: now)
         guard let day = try? await account.healthDataProvider.summaries(from: today, through: now).last,
-              calendar.isDate(day.date, inSameDayAs: today),
-              !hasBriefed(on: now, calendar: calendar) else { return }
+              calendar.isDate(day.date, inSameDayAs: today) else { return }
+        WidgetSync.publish(day)
+        guard !hasBriefed(on: now, calendar: calendar) else { return }
 
         let content = UNMutableNotificationContent()
         content.title = Self.title(for: day)
@@ -112,8 +113,7 @@ final class MorningBriefing {
     nonisolated static func body(for day: DailySummary, format: MetricFormatter = MetricFormatter()) -> String {
         var parts: [String] = []
         let hrv = Int(day.vitals.hrv.rounded())
-        if let mean = day.baseline[.hrv]?.mean, mean > 0 {
-            let percent = Int(((day.vitals.hrv - mean) / mean * 100).rounded())
+        if let percent = day.hrvChangePercent {
             switch percent {
             case 0: parts.append("HRV \(hrv) ms, right on your average.")
             case 1...: parts.append("HRV \(hrv) ms, \(percent)% above your average.")

@@ -51,7 +51,10 @@ struct TodayView: View {
             .navigationDestination(for: TodayDestination.self, destination: destinationView)
         }
         .sensoryFeedback(.selection, trigger: model.date)
-        .task(id: dataVersion) { await model.load(using: provider) }
+        .task(id: dataVersion) {
+            await model.load(using: provider)
+            publishWidget()
+        }
         // Seeing this morning's numbers here means the morning notification isn't needed.
         .onChange(of: isShowingThisMorning, initial: true) { _, showing in
             if showing { morning.markSeen(.now) }
@@ -67,6 +70,17 @@ struct TodayView: View {
     private func refresh() async {
         await account.refreshHealthData()
         await model.load(using: provider)
+        publishWidget()
+    }
+
+    /// Today's numbers (or the latest day, before last night syncs) go to the widgets; demo
+    /// data clears them.
+    private func publishWidget() {
+        guard model.isToday else { return }
+        guard account.usesRealData else { return WidgetSync.publish(nil) }
+        if case .loaded(let content) = model.state {
+            WidgetSync.publish(content.day)
+        }
     }
 
     /// The day on screen: usually the chosen one, or the latest synced day before last
