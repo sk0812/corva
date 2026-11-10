@@ -14,9 +14,10 @@ final class AppContainer {
     let pacts: PactStore
     let account: AccountService
     let checkIn: EveningCheckIn
+    let morning: MorningBriefing
 
     private init() {
-        // Demo data until an account with Google Health connected takes over (AccountService
+        // Demo data until Google Health or Apple Health takes over (AccountService
         // picks the provider; nothing downstream knows which it is). The demo experiments and
         // pacts are seeded from the same simulated behaviour the mock days reflect.
         let mock = MockHealthDataProvider()
@@ -31,5 +32,6 @@ final class AppContainer {
             demoProvider: mock
         )
         checkIn = EveningCheckIn(account: account, experiments: experiments)
+        morning = MorningBriefing(account: account)
     }
 }

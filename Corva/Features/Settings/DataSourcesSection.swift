@@ -5,6 +5,7 @@ import SwiftUI
 /// this phone.
 struct DataSourcesSection: View {
     @Environment(AccountService.self) private var account
+    @Environment(EveningCheckIn.self) private var checkIn
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var isConfirmingDisconnect = false
 
@@ -76,7 +77,10 @@ struct DataSourcesSection: View {
                     }
                 } else {
                     Button {
-                        Task { await account.connectAppleHealth() }
+                        Task {
+                            await account.connectAppleHealth()
+                            if account.appleHealthEnabled { await checkIn.requestAuthorizationIfNeeded() }
+                        }
                     } label: {
                         Label("Connect Apple Health", systemImage: "heart.text.square")
                     }
@@ -173,6 +177,8 @@ struct DataSourcesSection: View {
                 additionalHeaderFields: [:]
             )
         }
+        // Real data is in: ask once for notifications, for the morning recovery briefing.
+        if account.usesGoogleHealth { await checkIn.requestAuthorizationIfNeeded() }
     }
 }
 

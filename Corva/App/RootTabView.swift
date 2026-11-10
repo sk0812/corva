@@ -14,6 +14,7 @@ struct RootTabView: View {
     @Environment(AccountService.self) private var account
     @Environment(ExperimentStore.self) private var experiments
     @Environment(EveningCheckIn.self) private var checkIn
+    @Environment(MorningBriefing.self) private var morning
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppTab = .today
 
@@ -37,9 +38,16 @@ struct RootTabView: View {
             }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: selection)
-        .task { await account.start() }
+        .task {
+            // Not at init: iOS rejects a background request before SwiftUI registers its handler.
+            morning.schedule()
+            await account.start()
+        }
         .onChange(of: settings.syncedValues) { account.settingsChanged() }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                morning.schedule()
+            }
             if phase == .active {
                 Task {
                     await account.syncIfStale()

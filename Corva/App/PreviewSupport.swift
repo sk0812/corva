@@ -9,6 +9,7 @@ extension View {
             .environment(PactStore.preview)
             .environment(AccountService.preview)
             .environment(EveningCheckIn(account: AccountService.preview, experiments: ExperimentStore.preview))
+            .environment(MorningBriefing(account: AccountService.preview))
             .environment(\.healthDataProvider, MockHealthDataProvider.preview)
             .preferredColorScheme(.dark)
             .tint(CorvaColor.accent)

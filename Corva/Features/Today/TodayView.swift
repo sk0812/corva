@@ -13,6 +13,8 @@ struct TodayView: View {
     @Environment(\.dataVersion) private var dataVersion
     @Environment(\.metricFormatter) private var format
     @Environment(AccountService.self) private var account
+    @Environment(MorningBriefing.self) private var morning
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model = TodayViewModel()
 
     var body: some View {
@@ -50,6 +52,15 @@ struct TodayView: View {
         }
         .sensoryFeedback(.selection, trigger: model.date)
         .task(id: dataVersion) { await model.load(using: provider) }
+        // Seeing this morning's numbers here means the morning notification isn't needed.
+        .onChange(of: isShowingThisMorning, initial: true) { _, showing in
+            if showing { morning.markSeen(.now) }
+        }
+    }
+
+    private var isShowingThisMorning: Bool {
+        guard scenePhase == .active, account.usesRealData, case .loaded(let content) = model.state else { return false }
+        return !content.isEarlierDay && Calendar.current.isDateInToday(content.day.date)
     }
 
     /// Pulls the latest from Google Health and Apple Health (when connected), then reloads.

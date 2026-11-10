@@ -42,6 +42,7 @@
         "ENABLE_PREVIEWS": "YES",
         "ENABLE_USER_SELECTED_FILES": "readonly",
         "GENERATE_INFOPLIST_FILE": "YES",
+        "INFOPLIST_FILE": "Corva-Info.plist",
         "INFOPLIST_KEY_NSHealthShareUsageDescription": "Corva reads your sleep, heart rate, HRV, activity and workouts from Apple Health to score your recovery, strain and sleep. It never writes to Health, and this data stays on your iPhone.",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]": "YES",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]": "YES",

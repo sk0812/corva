@@ -57,8 +57,8 @@ struct AccountSection: View {
             Text("Account")
         } footer: {
             Text(account.isSignedIn
-                 ? "Your experiments and settings sync to your account. Health data synced from Google Health is stored in your account so Corva can work with it; disconnecting deletes it."
-                 : "Sign in to keep your experiments and to connect your own health data. Until then, Corva shows demo data.")
+                 ? "Your experiments and settings sync to your account. Health data synced from Google Health is stored in your account so Corva can work with it; disconnecting deletes it. Apple Health data stays on this iPhone."
+                 : "Sign in to keep your experiments and to connect Google Health. Apple Health works without an account.")
         }
         .listRowBackground(CorvaColor.surface)
         .sheet(isPresented: $isEmailSignInPresented) {
